@@ -1,0 +1,10 @@
+# requirements
+
+```txt
+streamlit
+requests
+openpyxl
+python-docx
+python-pptx
+lxml
+```

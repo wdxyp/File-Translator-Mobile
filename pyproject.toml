@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "baidu-translator-streamlit"
+version = "0.1.0"
+description = "Streamlit app for Baidu long-sentence translation"
+authors = ["Your Name <email@example.com>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.13"
+streamlit = "*"
+requests = "*"
+openpyxl = "*"
+python-docx = "*"
+python-pptx = "*"
+lxml = "*"
+
+[build-system]
+requires = ["poetry-core>=1.6.0"]
+build-backend = "poetry.core.masonry.api"
