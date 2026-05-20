@@ -17,6 +17,7 @@ import baidu_Translator_v4_0 as bt
 APP_TITLE = "My File Trans"
 APP_DIR = Path(__file__).resolve().parent
 GITHUB_REVISION_URL = "https://raw.githubusercontent.com/wdxyp/File-Translator-Mobile/main/revision.md"
+APP_VERSION = os.getenv("APP_VERSION", "").strip()
 
 try:
     os.chdir(APP_DIR)
@@ -84,6 +85,8 @@ def _is_mobile():
     return bool(re.search(r"(Mobile|Android|iPhone|iPad|iPod)", ua, flags=re.IGNORECASE))
 
 st.title(APP_TITLE)
+if APP_VERSION:
+    st.caption(f"Version: {APP_VERSION}")
 
 app_id = os.getenv("BAIDU_APP_ID", "").strip()
 secret_key = os.getenv("BAIDU_SECRET_KEY", "").strip()
