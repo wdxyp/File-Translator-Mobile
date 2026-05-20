@@ -255,6 +255,60 @@ def get_translation(text):
     translated_text = apply_revisions(translated_text)
     return translated_text
 
+def _ppt_normalize_linebreaks(text):
+    if not text:
+        return text
+    return str(text).replace("\r\n", "\n").replace("\r", "\n").replace("\v", "\n")
+
+def _ppt_denormalize_linebreaks(text):
+    if not text:
+        return text
+    return str(text).replace("\n", "\v")
+
+def translate_ppt_paragraph(paragraph):
+    full_text = paragraph.text
+    if not full_text or not str(full_text).strip():
+        return
+
+    normalized = _ppt_normalize_linebreaks(full_text)
+    translated = get_translation(normalized)
+
+    original_texts.append(normalized)
+    translated_texts.append(translated)
+
+    if append_translation.get():
+        result_norm = append_translation_to_original(normalized, translated)
+    else:
+        result_norm = translated
+
+    result_text = _ppt_denormalize_linebreaks(result_norm)
+
+    if paragraph.runs:
+        first_run = paragraph.runs[0]
+    else:
+        first_run = paragraph.add_run()
+
+    original_font_name = first_run.font.name
+    original_size = first_run.font.size
+    original_bold = first_run.font.bold
+    original_italic = first_run.font.italic
+    original_underline = first_run.font.underline
+
+    first_run.text = result_text
+    for r in paragraph.runs[1:]:
+        r.text = ""
+
+    target_font_name = get_target_font_name()
+    if target_font_name:
+        set_pptx_run_font(first_run, target_font_name)
+        set_pptx_paragraph_default_font(paragraph, target_font_name)
+    elif original_font_name:
+        first_run.font.name = original_font_name
+        first_run.font.size = original_size
+        first_run.font.bold = original_bold
+        first_run.font.italic = original_italic
+        first_run.font.underline = original_underline
+
 def append_translation_to_original(text, translated_text, cell=None):
     text = text.strip()
     translated_text = translated_text.strip()
@@ -274,44 +328,7 @@ def append_translation_to_original(text, translated_text, cell=None):
 def translate_shape_for_ppt(shape):
     if shape.has_text_frame:
         for paragraph in shape.text_frame.paragraphs:
-            for run in paragraph.runs:
-                text = run.text
-                if not text.strip(): continue
-                # 保存原有格式
-                original_font_name = run.font.name
-                original_size = run.font.size
-                original_bold = run.font.bold
-                original_italic = run.font.italic
-                original_underline = run.font.underline
-
-                translated_text = get_translation(text)
-                # 收集翻译前后的文本
-                original_texts.append(text)
-                translated_texts.append(translated_text)
-                
-                if append_translation.get():
-                    run.text = append_translation_to_original(text, translated_text)
-                else:
-                    run.text = translated_text
-
-                # 恢复原有格式
-                target_font_name = get_target_font_name()
-                if target_font_name:
-                    set_pptx_run_font(run, target_font_name)
-                elif original_font_name:
-                    run.font.name = original_font_name
-                run.font.size = original_size
-                run.font.bold = original_bold
-                run.font.italic = original_italic
-                run.font.underline = original_underline
-            target_font_name = get_target_font_name()
-            if target_font_name:
-                set_pptx_paragraph_default_font(paragraph, target_font_name)
-            if not append_translation.get():
-                full_text = paragraph.text
-                revised_text = apply_revisions(full_text)
-                if revised_text != full_text:
-                    paragraph.text = revised_text
+            translate_ppt_paragraph(paragraph)
     elif shape.shape_type == 6:  # 组合形状
         for sub_shape in shape.shapes:
             translate_shape_for_ppt(sub_shape)
@@ -320,44 +337,7 @@ def translate_shape_for_ppt(shape):
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.text_frame.paragraphs:
-                    for run in paragraph.runs:
-                        text = run.text
-                        if not text.strip(): continue
-                        # 保存原有格式
-                        original_font_name = run.font.name
-                        original_size = run.font.size
-                        original_bold = run.font.bold
-                        original_italic = run.font.italic
-                        original_underline = run.font.underline
-
-                        translated_text = get_translation(text)
-                        # 收集翻译前后的文本
-                        original_texts.append(text)
-                        translated_texts.append(translated_text)
-                        
-                        if append_translation.get():
-                            run.text = append_translation_to_original(text, translated_text)
-                        else:
-                            run.text = translated_text
-
-                        # 恢复原有格式
-                        target_font_name = get_target_font_name()
-                        if target_font_name:
-                            set_pptx_run_font(run, target_font_name)
-                        elif original_font_name:
-                            run.font.name = original_font_name
-                        run.font.size = original_size
-                        run.font.bold = original_bold
-                        run.font.italic = original_italic
-                        run.font.underline = original_underline
-                    target_font_name = get_target_font_name()
-                    if target_font_name:
-                        set_pptx_paragraph_default_font(paragraph, target_font_name)
-                    if not append_translation.get():
-                        full_text = paragraph.text
-                        revised_text = apply_revisions(full_text)
-                        if revised_text != full_text:
-                            paragraph.text = revised_text
+                    translate_ppt_paragraph(paragraph)
 
 def update_ui_status(msg):
     """线程安全地更新 UI 状态"""
