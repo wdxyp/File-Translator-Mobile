@@ -48,6 +48,10 @@ if "progress_pct" not in st.session_state:
     st.session_state.progress_pct = 0
 if "progress_text" not in st.session_state:
     st.session_state.progress_text = ""
+if "download_clicked" not in st.session_state:
+    st.session_state.download_clicked = False
+if "uploader_nonce" not in st.session_state:
+    st.session_state.uploader_nonce = 0
 
 if st.session_state.is_running and (not st.session_state.translate_requested or not st.session_state.lock_acquired):
     st.session_state.is_running = False
@@ -105,12 +109,27 @@ generate_corpus = st.checkbox("生成语料库（Corpus）", value=False, key="g
 uploaded_file = st.file_uploader(
     "上传文件（docx / xlsx / pptx / ppt）",
     type=["docx", "xlsx", "pptx", "ppt"],
-    key="uploaded_file",
+    key=f"uploaded_file_{st.session_state.uploader_nonce}",
 )
 
 use_github_revision = st.checkbox("使用 GitHub 上的 revision.md（自动更新）", value=True, key="use_github_revision")
 
 is_mobile = _is_mobile()
+
+def _on_download_complete():
+    st.session_state.result_bytes = None
+    st.session_state.result_file_name = None
+    st.session_state.result_mime = None
+    st.session_state.log_lines = []
+    st.session_state.progress_pct = 0
+    st.session_state.progress_text = ""
+    st.session_state.translate_requested = False
+    st.session_state.is_running = False
+    st.session_state.download_clicked = False
+    st.session_state.show_busy_dialog = False
+    st.session_state.lock_acquired = False
+    st.session_state.uploader_nonce += 1
+    st.rerun()
 
 def _on_start_translate():
     if st.session_state.is_running:
@@ -129,17 +148,18 @@ def _on_start_translate():
     st.session_state.result_file_name = None
     st.session_state.result_mime = None
     st.session_state.log_lines = []
+    st.session_state.download_clicked = False
     st.session_state.progress_pct = 0
     st.session_state.progress_text = "翻译中…"
     st.session_state.translate_requested = True
     st.session_state.is_running = True
 
-col_run, col_dl = st.columns([2, 1] if is_mobile else [1, 1])
+col_run, col_dl, col_done = st.columns([2, 1, 1] if is_mobile else [1, 1, 1])
 
 _busy_dialog()
 
 with col_run:
-    run = st.button(
+    st.button(
         "开始翻译",
         disabled=(
             st.session_state.is_running
@@ -153,6 +173,8 @@ with col_run:
     )
 with col_dl:
     download_slot = st.empty()
+with col_done:
+    download_done_slot = st.empty()
 
 progress_slot = st.empty()
 log_slot = st.empty()
@@ -174,7 +196,7 @@ def _render_download():
             key="download_result_disabled",
         )
         return
-    download_slot.download_button(
+    clicked = download_slot.download_button(
         "下载结果",
         data=st.session_state.result_bytes,
         file_name=st.session_state.result_file_name,
@@ -182,12 +204,25 @@ def _render_download():
         use_container_width=True,
         key="download_result_ready",
     )
+    if clicked:
+        st.session_state.download_clicked = True
+
+def _render_download_done():
+    result_ready = bool(st.session_state.result_bytes and st.session_state.result_file_name)
+    download_done_slot.button(
+        "下载完成",
+        disabled=(st.session_state.is_running or (not result_ready) or (not st.session_state.download_clicked)),
+        use_container_width=True,
+        key="download_done",
+        on_click=_on_download_complete,
+    )
 
 def _render_log():
     lines = st.session_state.log_lines[-200:]
     log_slot.code("\n".join(lines))
 
 _render_download()
+_render_download_done()
 _render_progress()
 _render_log()
 
