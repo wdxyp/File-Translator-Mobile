@@ -290,12 +290,18 @@ if st.session_state.translate_requested and uploaded_file is not None and st.ses
 
                 if generate_corpus:
                     corpus_dir = work_dir_path / "Corpus"
+                    corpus_files = []
+                    if corpus_dir.exists():
+                        corpus_files.extend(sorted(corpus_dir.glob("*.xlsx")))
+                    if not corpus_files:
+                        corpus_files.extend(sorted(work_dir_path.rglob("Corpus_v*.xlsx")))
+                        corpus_files.extend(sorted(out_dir.rglob("Corpus_v*.xlsx")))
                     zip_path = work_dir_path / "result.zip"
                     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
                         zf.writestr(output_file_path.name, output_bytes)
-                        if corpus_dir.exists():
-                            for p in sorted(corpus_dir.glob("*.xlsx")):
-                                zf.write(p, arcname=f"Corpus/{p.name}")
+                        for p in sorted({str(p) for p in corpus_files}):
+                            p = Path(p)
+                            zf.write(p, arcname=f"Corpus/{p.name}")
                     st.session_state.result_bytes = zip_path.read_bytes()
                     st.session_state.result_file_name = "result.zip"
                     st.session_state.result_mime = "application/zip"

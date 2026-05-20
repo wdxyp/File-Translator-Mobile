@@ -545,6 +545,44 @@ def translate_excel_xls(input_file, output_file):
 def translate_word(input_file, output_file):
     doc = Document(input_file)
     target_font_name = get_target_font_name()
+
+    def translate_word_paragraph(paragraph):
+        full_text = paragraph.text
+        if not full_text or not str(full_text).strip():
+            return
+
+        normalized = str(full_text).replace("\r\n", "\n").replace("\r", "\n")
+        t = get_translation(normalized)
+
+        original_texts.append(normalized)
+        translated_texts.append(t)
+
+        result_text = append_translation_to_original(normalized, t) if append_translation.get() else t
+
+        drawings = []
+        for run in paragraph.runs:
+            for inline in xpath_with_ns(run.element, './/w:drawing'):
+                pic_elements = xpath_with_ns(inline, './/a:blip/@r:embed')
+                if pic_elements:
+                    drawings.append(inline)
+
+        if paragraph.runs:
+            first_run = paragraph.runs[0]
+        else:
+            first_run = paragraph.add_run()
+
+        first_run.text = result_text
+        if target_font_name:
+            set_docx_run_font(first_run, target_font_name)
+
+        for run in paragraph.runs[1:]:
+            has_drawing = bool(xpath_with_ns(run.element, './/w:drawing'))
+            if not has_drawing:
+                run.text = ""
+
+        for inline in drawings:
+            new_run = paragraph.add_run()
+            new_run._r.append(inline)
     
     # 处理普通段落 (完全还原 V2.9 逻辑)
     total_paragraphs = len(doc.paragraphs)
@@ -553,30 +591,7 @@ def translate_word(input_file, output_file):
             msg = f"正在翻译 Word: 段落 {i}/{total_paragraphs}..."
             print(f"[进度] {msg}")
             update_ui_status(msg)
-        for run in paragraph.runs:
-            # 处理文字翻译
-            text = run.text
-            if text.strip():  # 只翻译非空文本
-                # 先获取翻译结果
-                t = get_translation(text)
-                
-                # 收集翻译前后的文本
-                original_texts.append(text)
-                translated_texts.append(t)
-                if append_translation.get():
-                    run.text = append_translation_to_original(text, t)
-                else:
-                    run.text = t
-                if target_font_name:
-                    set_docx_run_font(run, target_font_name)
-            
-            # 处理图片 (核心: xpath 提取并重新 add_run)
-            for inline in xpath_with_ns(run.element, './/w:drawing'):  # 解决问题的核心
-                pic_elements = xpath_with_ns(inline, './/a:blip/@r:embed')
-                if pic_elements:  # 检查是否存在图片元素
-                    # 保持图片在文档中的位置 and 大小
-                    new_run = paragraph.add_run()
-                    new_run._r.append(inline)
+        translate_word_paragraph(paragraph)
     
     # 处理表格 (完全还原 V2.9 逻辑)
     total_tables = len(doc.tables)
@@ -587,30 +602,7 @@ def translate_word(input_file, output_file):
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
-                    for run in paragraph.runs:
-                        # 处理文字翻译
-                        text = run.text
-                        if text.strip():  # 只翻译非空文本
-                            # 先获取翻译结果
-                            t = get_translation(text)
-                            
-                            # 收集翻译前后的文本
-                            original_texts.append(text)
-                            translated_texts.append(t)
-                            if append_translation.get():
-                                run.text = append_translation_to_original(text, t)
-                            else:
-                                run.text = t
-                            if target_font_name:
-                                set_docx_run_font(run, target_font_name)
-                        
-                        # 处理图片
-                        for inline in xpath_with_ns(run.element, './/w:drawing'):
-                            pic_elements = xpath_with_ns(inline, './/a:blip/@r:embed')
-                            if pic_elements:  # 检查是否存在图片元素
-                                # 保持图片在文档中的位置和大小
-                                new_run = paragraph.add_run()
-                                new_run._r.append(inline)
+                    translate_word_paragraph(paragraph)
     
     # 处理形状中的文字 (完全还原 V2.9 逻辑)
     for shape in doc.inline_shapes:
