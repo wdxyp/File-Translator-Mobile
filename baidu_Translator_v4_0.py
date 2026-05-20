@@ -407,17 +407,12 @@ def translate_excel_xlsx(input_file, output_file):
                 update_ui_status(row_msg)
             for cell in row:
                 if cell.value and isinstance(cell.value, str):
-                    # 按换行符分割文本
-                    lines = cell.value.split('\n')
-                    translated_lines = []
-                    for line in lines:
-                        t = get_translation(line)
-                        # 收集翻译前后的文本
-                        original_texts.append(line)
-                        translated_texts.append(t)
-                        translated_lines.append(t)
-                    # 重新组合翻译后的行
-                    translated_text = '\n'.join(translated_lines)
+                    original_value = str(cell.value)
+                    normalized_value = original_value.replace("\r\n", "\n").replace("\r", "\n")
+                    translated_text = get_translation(normalized_value)
+
+                    original_texts.append(normalized_value)
+                    translated_texts.append(translated_text)
                     
                     # 严格还原 V2.9 样式保护逻辑
                     # 保存原格式
@@ -427,7 +422,7 @@ def translate_excel_xlsx(input_file, output_file):
                     original_fill = PatternFill(**cell.fill.__dict__)
                     
                     if append_translation.get():
-                        cell.value = append_translation_to_original(cell.value, translated_text, cell)
+                        cell.value = append_translation_to_original(normalized_value, translated_text, cell)
                     else:
                         cell.value = translated_text
                     
@@ -501,18 +496,14 @@ def translate_excel_xls(input_file, output_file):
             for col in df.columns:
                 cell_value = df.at[idx, col]
                 if pd.notna(cell_value) and isinstance(cell_value, str):
-                    # 按换行符分割文本
-                    lines = str(cell_value).split('\n')
-                    translated_lines = []
-                    for line in lines:
-                        t = get_translation(line)
-                        # 收集翻译前后的文本
-                        original_texts.append(line)
-                        translated_texts.append(t)
-                        translated_lines.append(t)
-                    # 重新组合翻译后的行
-                    translated_text = '\n'.join(translated_lines)
-                    df.at[idx, col] = append_translation_to_original(str(cell_value), translated_text) if append_translation.get() else translated_text
+                    original_value = str(cell_value)
+                    normalized_value = original_value.replace("\r\n", "\n").replace("\r", "\n")
+                    translated_text = get_translation(normalized_value)
+
+                    original_texts.append(normalized_value)
+                    translated_texts.append(translated_text)
+
+                    df.at[idx, col] = append_translation_to_original(normalized_value, translated_text) if append_translation.get() else translated_text
         # 保存翻译后的工作表
         df.to_excel(writer, sheet_name=unique_sheet_name, index=False)
     # 保存工作簿
