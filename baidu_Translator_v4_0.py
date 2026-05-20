@@ -697,6 +697,8 @@ def translate_word(input_file, output_file):
                         if a_r_element is not None:
                             set_drawingml_r_element_font(a_r_element, target_font_name)
         if target_font_name:
+            for r_element in xpath_with_ns(doc_element, './/w:r'):
+                set_docx_r_element_font(r_element, target_font_name)
             for r_element in xpath_with_ns(doc_element, './/w:txbxContent//w:r'):
                 set_docx_r_element_font(r_element, target_font_name)
             for a_rpr_element in doc_element.xpath(f'.//*[namespace-uri()="{A_NS}" and (local-name()="rPr" or local-name()="defRPr" or local-name()="endParaRPr")]'):
@@ -776,14 +778,44 @@ def save_to_corpus(orig, trans):
         except Exception:
             direction = "unknown"
         corpus_file = f'Corpus/Corpus_v2.11_{direction}_{timestamp}.xlsx'
+
+        to_lang = TO_LANG_MAP.get(direction)
+        seen = set()
+        filtered_orig = []
+        filtered_trans = []
+        for o, t in zip(orig, trans):
+            if o is None or t is None:
+                continue
+            o = str(o).replace("\r\n", "\n").replace("\r", "\n").strip()
+            t = str(t).replace("\r\n", "\n").replace("\r", "\n").strip()
+            if not o or not t:
+                continue
+            if to_lang in ("zh", "zh_tw") and re.search(r"[\u4e00-\u9fff]", o):
+                continue
+            if o == t:
+                continue
+            if not re.search(r"[\uac00-\ud7a3]", o) and re.search(r"[A-Za-z0-9]", o):
+                continue
+            if not re.search(r"[\uac00-\ud7a3\u4e00-\u9fff]", o) and not re.search(r"[A-Za-z0-9]", o):
+                continue
+            key = o
+            if key in seen:
+                continue
+            seen.add(key)
+            filtered_orig.append(o)
+            filtered_trans.append(t)
+
+        if not filtered_orig:
+            return
+
         if pd is not None:
-            pd.DataFrame({'序号': range(1, len(orig)+1), '翻译前': orig, '翻译后': trans}).to_excel(corpus_file, index=False)
+            pd.DataFrame({'序号': range(1, len(filtered_orig)+1), '翻译前': filtered_orig, '翻译后': filtered_trans}).to_excel(corpus_file, index=False)
             return
         wb = Workbook()
         ws = wb.active
         ws.title = "Corpus"
         ws.append(["序号", "翻译前", "翻译后"])
-        for i, (o, t) in enumerate(zip(orig, trans), 1):
+        for i, (o, t) in enumerate(zip(filtered_orig, filtered_trans), 1):
             ws.append([i, o, t])
         wb.save(corpus_file)
 
