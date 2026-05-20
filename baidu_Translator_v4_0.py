@@ -537,6 +537,21 @@ def translate_word(input_file, output_file):
     doc = Document(input_file)
     target_font_name = get_target_font_name()
 
+    def set_style_font(style_element, font_name):
+        if style_element is None or not font_name:
+            return
+        rPr = style_element.find(qn('w:rPr'))
+        if rPr is None:
+            rPr = OxmlElement('w:rPr')
+            style_element.append(rPr)
+        rFonts = rPr.find(qn('w:rFonts'))
+        if rFonts is None:
+            rFonts = OxmlElement('w:rFonts')
+            rPr.append(rFonts)
+        rFonts.set(qn('w:ascii'), font_name)
+        rFonts.set(qn('w:hAnsi'), font_name)
+        rFonts.set(qn('w:eastAsia'), font_name)
+
     def translate_word_paragraph(paragraph):
         full_text = paragraph.text
         if not full_text or not str(full_text).strip():
@@ -697,6 +712,20 @@ def translate_word(input_file, output_file):
                         if a_r_element is not None:
                             set_drawingml_r_element_font(a_r_element, target_font_name)
         if target_font_name:
+            try:
+                for s in doc.styles:
+                    try:
+                        if getattr(s, "font", None) is not None:
+                            s.font.name = target_font_name
+                    except Exception:
+                        pass
+                    try:
+                        set_style_font(getattr(s, "_element", None), target_font_name)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             for r_element in xpath_with_ns(doc_element, './/w:r'):
                 set_docx_r_element_font(r_element, target_font_name)
             for r_element in xpath_with_ns(doc_element, './/w:txbxContent//w:r'):
