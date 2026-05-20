@@ -110,6 +110,12 @@ def set_docx_r_element_font(r_element, font_name):
     rFonts.set(qn('w:ascii'), font_name)
     rFonts.set(qn('w:hAnsi'), font_name)
     rFonts.set(qn('w:eastAsia'), font_name)
+    rFonts.set(qn('w:cs'), font_name)
+    for k in (qn('w:asciiTheme'), qn('w:hAnsiTheme'), qn('w:eastAsiaTheme'), qn('w:csTheme')):
+        try:
+            rFonts.attrib.pop(k, None)
+        except Exception:
+            pass
 
 def set_docx_run_font(run, font_name):
     if not run or not font_name:
@@ -551,6 +557,12 @@ def translate_word(input_file, output_file):
         rFonts.set(qn('w:ascii'), font_name)
         rFonts.set(qn('w:hAnsi'), font_name)
         rFonts.set(qn('w:eastAsia'), font_name)
+        rFonts.set(qn('w:cs'), font_name)
+        for k in (qn('w:asciiTheme'), qn('w:hAnsiTheme'), qn('w:eastAsiaTheme'), qn('w:csTheme')):
+            try:
+                rFonts.attrib.pop(k, None)
+            except Exception:
+                pass
 
     def translate_word_paragraph(paragraph):
         full_text = paragraph.text
