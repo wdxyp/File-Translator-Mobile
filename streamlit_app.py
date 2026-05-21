@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import tempfile
 import time
 import uuid
@@ -18,6 +19,14 @@ APP_TITLE = "My File Trans"
 APP_DIR = Path(__file__).resolve().parent
 GITHUB_REVISION_URL = "https://raw.githubusercontent.com/wdxyp/File-Translator-Mobile/main/revision.md"
 APP_VERSION = os.getenv("APP_VERSION", "").strip()
+APP_VERSION_JSON = ""
+try:
+    version_path = APP_DIR / "version.json"
+    if version_path.exists():
+        data = json.loads(version_path.read_text(encoding="utf-8"))
+        APP_VERSION_JSON = str(data.get("version", "")).strip()
+except Exception:
+    APP_VERSION_JSON = ""
 
 try:
     os.chdir(APP_DIR)
@@ -88,8 +97,11 @@ def _is_mobile():
     return bool(re.search(r"(Mobile|Android|iPhone|iPad|iPod)", ua, flags=re.IGNORECASE))
 
 st.title(APP_TITLE)
-if APP_VERSION:
-    st.caption(f"Version: {APP_VERSION}")
+display_version = APP_VERSION_JSON or APP_VERSION
+if display_version:
+    if not display_version.lower().startswith("v"):
+        display_version = f"v{display_version}"
+    st.caption(f"Version: {display_version}")
 
 app_id = os.getenv("BAIDU_APP_ID", "").strip()
 secret_key = os.getenv("BAIDU_SECRET_KEY", "").strip()

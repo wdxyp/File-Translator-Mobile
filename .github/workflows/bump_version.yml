@@ -1,0 +1,64 @@
+name: Bump version
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Bump version.json
+        run: |
+          python - <<'PY'
+          import json, re
+          from pathlib import Path
+          
+          path = Path("version.json")
+          data = {"version": "1.0.0"}
+          if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+          
+          v = str(data.get("version", "1.0.0")).strip().lstrip("vV")
+          m = re.match(r"^(\d+)\.(\d+)\.(\d+)$", v)
+          if not m:
+            major, minor, patch = 1, 0, 0
+          else:
+            major, minor, patch = map(int, m.groups())
+          
+          patch += 1
+          new_v = f"{major}.{minor}.{patch}"
+          data["version"] = new_v
+          path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          print("New version:", new_v)
+          PY
+
+      - name: Commit and push
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          ver=$(python - <<'PY'
+          import json
+          print(json.load(open("version.json", encoding="utf-8"))["version"])
+          PY
+          )
+          git add version.json
+          git commit -m "chore: bump version to v$ver [skip ci]"
+          git push
