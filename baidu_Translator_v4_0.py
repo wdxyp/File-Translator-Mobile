@@ -418,10 +418,10 @@ def translate_excel_xlsx(input_file, output_file):
                     if "\n" in normalized_value:
                         translated_lines = []
                         for line in normalized_value.split("\n"):
-                            if not str(line).strip():
-                                translated_lines.append("")
-                                continue
-                            translated_lines.append(get_translation(line))
+                            if line.strip():
+                                translated_lines.append(get_translation(line))
+                            else:
+                                translated_lines.append(line)
                         translated_text = "\n".join(translated_lines)
                     else:
                         translated_text = get_translation(normalized_value)
@@ -440,14 +440,6 @@ def translate_excel_xlsx(input_file, output_file):
                         cell.value = append_translation_to_original(normalized_value, translated_text, cell)
                     else:
                         cell.value = translated_text
-
-                    if "\n" in str(cell.value):
-                        try:
-                            line_count = str(cell.value).count("\n") + 1
-                            base_height = ws.row_dimensions[cell.row].height or 15
-                            ws.row_dimensions[cell.row].height = max(ws.row_dimensions[cell.row].height or 0, min(300, base_height * line_count))
-                        except Exception:
-                            pass
                     
                     # 恢复原格式
                     target_font_name = get_target_font_name()
@@ -466,12 +458,9 @@ def translate_excel_xlsx(input_file, output_file):
                     else:
                         cell.font = original_font
                     cell.border = original_border
-                    try:
-                        cell.alignment = original_alignment.copy(wrap_text=True)
-                    except Exception:
-                        cell.alignment = Alignment(wrap_text=True, vertical=original_alignment.vertical)
+                    cell.alignment = original_alignment
                     cell.fill = original_fill
-                    # 保持换行显示（不强制覆盖其它对齐属性）
+                    cell.alignment = Alignment(wrap_text=True, vertical='center')
     # 保存修改后的工作簿
     wb.save(output_file)
     # 翻译完成后调用保存语料库函数
@@ -526,10 +515,10 @@ def translate_excel_xls(input_file, output_file):
                     if "\n" in normalized_value:
                         translated_lines = []
                         for line in normalized_value.split("\n"):
-                            if not str(line).strip():
-                                translated_lines.append("")
-                                continue
-                            translated_lines.append(get_translation(line))
+                            if line.strip():
+                                translated_lines.append(get_translation(line))
+                            else:
+                                translated_lines.append(line)
                         translated_text = "\n".join(translated_lines)
                     else:
                         translated_text = get_translation(normalized_value)
@@ -560,17 +549,8 @@ def translate_excel_xls(input_file, output_file):
                                     underline=cell.font.underline,
                                     color=cell.font.color,
                                 )
-                        if cell.value and isinstance(cell.value, str) and "\n" in str(cell.value):
-                            try:
-                                cell.alignment = cell.alignment.copy(wrap_text=True)
-                            except Exception:
-                                pass
-                            try:
-                                line_count = str(cell.value).count("\n") + 1
-                                base_height = ws.row_dimensions[cell.row].height or 15
-                                ws.row_dimensions[cell.row].height = max(ws.row_dimensions[cell.row].height or 0, min(300, base_height * line_count))
-                            except Exception:
-                                pass
+                        if cell.value and isinstance(cell.value, str):
+                            cell.alignment = Alignment(wrap_text=True, vertical='center')
             wb.save(output_file_xlsx)
         except Exception:
             pass
