@@ -324,7 +324,8 @@ def append_translation_to_original(text, translated_text, cell=None):
         ws = cell.parent
         row_num = cell.row
         original_height = ws.row_dimensions[row_num].height
-        ws.row_dimensions[row_num].height = (original_height * 2) if original_height else 30
+        if original_height:
+            ws.row_dimensions[row_num].height = original_height * 2
     return result
 
 # ==========================================
@@ -458,10 +459,12 @@ def translate_excel_xlsx(input_file, output_file):
                     else:
                         cell.font = original_font
                     cell.border = original_border
-                    cell.alignment = original_alignment
+                    try:
+                        cell.alignment = original_alignment.copy(wrap_text=True)
+                    except Exception:
+                        cell.alignment = Alignment(wrap_text=True, vertical=original_alignment.vertical)
                     cell.fill = original_fill
-                    # 设置单元格自动换行
-                    cell.alignment = Alignment(wrap_text=True, vertical='center')
+                    # 保持换行显示（不强制覆盖其它对齐属性）
     # 保存修改后的工作簿
     wb.save(output_file)
     # 翻译完成后调用保存语料库函数
@@ -550,6 +553,11 @@ def translate_excel_xls(input_file, output_file):
                                     underline=cell.font.underline,
                                     color=cell.font.color,
                                 )
+                        if cell.value and isinstance(cell.value, str) and "\n" in str(cell.value):
+                            try:
+                                cell.alignment = cell.alignment.copy(wrap_text=True)
+                            except Exception:
+                                pass
             wb.save(output_file_xlsx)
         except Exception:
             pass
