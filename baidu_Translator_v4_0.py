@@ -241,12 +241,17 @@ def baidu_translate(q, from_lang, to_lang):
             result = response.json()
             if 'trans_result' in result:
                 return result['trans_result'][0]['dst']
-            else:
+            if 'error_code' in result:
+                retries += 1
+                if retries < max_retries:
+                    time.sleep(retry_delay * retries)
+                    continue
                 return q
+            return q
         except Exception:
             retries += 1
             if retries < max_retries:
-                time.sleep(retry_delay)
+                time.sleep(retry_delay * retries)
     return q
 
 def get_translation(text):
