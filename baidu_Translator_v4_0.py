@@ -324,8 +324,7 @@ def append_translation_to_original(text, translated_text, cell=None):
         ws = cell.parent
         row_num = cell.row
         original_height = ws.row_dimensions[row_num].height
-        if original_height:
-            ws.row_dimensions[row_num].height = original_height * 2
+        ws.row_dimensions[row_num].height = (original_height * 2) if original_height else 30
     return result
 
 # ==========================================
@@ -441,6 +440,14 @@ def translate_excel_xlsx(input_file, output_file):
                         cell.value = append_translation_to_original(normalized_value, translated_text, cell)
                     else:
                         cell.value = translated_text
+
+                    if "\n" in str(cell.value):
+                        try:
+                            line_count = str(cell.value).count("\n") + 1
+                            base_height = ws.row_dimensions[cell.row].height or 15
+                            ws.row_dimensions[cell.row].height = max(ws.row_dimensions[cell.row].height or 0, min(300, base_height * line_count))
+                        except Exception:
+                            pass
                     
                     # 恢复原格式
                     target_font_name = get_target_font_name()
@@ -556,6 +563,12 @@ def translate_excel_xls(input_file, output_file):
                         if cell.value and isinstance(cell.value, str) and "\n" in str(cell.value):
                             try:
                                 cell.alignment = cell.alignment.copy(wrap_text=True)
+                            except Exception:
+                                pass
+                            try:
+                                line_count = str(cell.value).count("\n") + 1
+                                base_height = ws.row_dimensions[cell.row].height or 15
+                                ws.row_dimensions[cell.row].height = max(ws.row_dimensions[cell.row].height or 0, min(300, base_height * line_count))
                             except Exception:
                                 pass
             wb.save(output_file_xlsx)
