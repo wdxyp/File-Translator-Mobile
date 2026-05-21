@@ -379,6 +379,7 @@ def translate_excel_xlsx(input_file, output_file):
     """处理.xlsx格式的Excel文件"""
     # 加载工作簿 (keep_vba=True 尝试保留宏和部分绘图元数据)
     wb = load_workbook(input_file, keep_vba=True)
+    excel_lb_token = "<<<__LB__>>>"
     # 收集所有已存在的工作表名称（包括原始和已处理的）
     existing_sheet_names = set()
     total_sheets = len(wb.sheetnames)
@@ -415,7 +416,13 @@ def translate_excel_xlsx(input_file, output_file):
                 if cell.value and isinstance(cell.value, str):
                     original_value = str(cell.value)
                     normalized_value = original_value.replace("\r\n", "\n").replace("\r", "\n")
-                    translated_text = get_translation(normalized_value)
+                    request_value = normalized_value
+                    if "\n" in normalized_value:
+                        request_value = normalized_value.replace("\n", f"\n{excel_lb_token}\n")
+                    translated_text = get_translation(request_value)
+                    if "\n" in normalized_value:
+                        translated_text = re.sub(rf"\\s*{re.escape(excel_lb_token)}\\s*", "\n", translated_text or "")
+                        translated_text = str(translated_text).replace("\r\n", "\n").replace("\r", "\n")
 
                     original_texts.append(normalized_value)
                     translated_texts.append(translated_text)
@@ -465,6 +472,7 @@ def translate_excel_xls(input_file, output_file):
     base_output = os.path.splitext(output_file)[0]
     output_file_xlsx = base_output + '.xlsx'
     target_font_name = get_target_font_name()
+    excel_lb_token = "<<<__LB__>>>"
     # 读取所有工作表
     excel_file = pd.ExcelFile(input_file)
     # 创建一个新的ExcelWriter对象，使用默认引擎
@@ -504,7 +512,13 @@ def translate_excel_xls(input_file, output_file):
                 if pd.notna(cell_value) and isinstance(cell_value, str):
                     original_value = str(cell_value)
                     normalized_value = original_value.replace("\r\n", "\n").replace("\r", "\n")
-                    translated_text = get_translation(normalized_value)
+                    request_value = normalized_value
+                    if "\n" in normalized_value:
+                        request_value = normalized_value.replace("\n", f"\n{excel_lb_token}\n")
+                    translated_text = get_translation(request_value)
+                    if "\n" in normalized_value:
+                        translated_text = re.sub(rf"\\s*{re.escape(excel_lb_token)}\\s*", "\n", translated_text or "")
+                        translated_text = str(translated_text).replace("\r\n", "\n").replace("\r", "\n")
 
                     original_texts.append(normalized_value)
                     translated_texts.append(translated_text)

@@ -75,7 +75,6 @@ def _busy_dialog():
         st.write("已有其他用户正在翻译，请稍后再试。")
         if st.button("知道了", key="busy_dialog_ok", use_container_width=True):
             st.session_state.show_busy_dialog = False
-            st.rerun()
 
     _render()
 
@@ -129,7 +128,6 @@ def _on_download_complete():
     st.session_state.show_busy_dialog = False
     st.session_state.lock_acquired = False
     st.session_state.uploader_nonce += 1
-    st.rerun()
 
 def _on_start_translate():
     if st.session_state.is_running:
