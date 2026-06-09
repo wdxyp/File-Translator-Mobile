@@ -98,26 +98,22 @@ def _is_mobile():
     return bool(re.search(r"(Mobile|Android|iPhone|iPad|iPod)", ua, flags=re.IGNORECASE))
 
 st.title(APP_TITLE)
-display_version = APP_VERSION_JSON or APP_VERSION
+# --- 引擎选择 ---
+engine = st.radio("选择翻译引擎", ["Baidu (V2.12)", "Kimi (V2.14)"], horizontal=True, key="engine")
+
+display_version = "2.0" # 强制更新显示为 V2.0
 if display_version:
     if not display_version.lower().startswith("v"):
         display_version = f"v{display_version}"
     st.caption(f"Version: {display_version}")
-
-# --- 引擎选择 ---
-engine = st.radio("选择翻译引擎", ["Baidu (V2.12)", "Kimi (V2.14)"], horizontal=True, key="engine")
 
 # --- 密钥配置 ---
 if engine == "Baidu (V2.12)":
     app_id = os.getenv("BAIDU_APP_ID", "").strip()
     secret_key = os.getenv("BAIDU_SECRET_KEY", "").strip()
     
-    with st.expander("Baidu API 配置", expanded=not (app_id and secret_key)):
-        app_id = st.text_input("BAIDU_APP_ID", value=app_id, type="password")
-        secret_key = st.text_input("BAIDU_SECRET_KEY", value=secret_key, type="password")
-    
     if not app_id or not secret_key:
-        st.error("未检测到 BAIDU_APP_ID / BAIDU_SECRET_KEY。请在配置项中输入或在 Secrets 中配置。")
+        st.error("未检测到 BAIDU_APP_ID / BAIDU_SECRET_KEY。请在 Streamlit Secrets 中配置。")
     
     # 语言映射使用 Baidu 的
     TO_LANG_MAP = baidu_bt.TO_LANG_MAP
@@ -125,12 +121,8 @@ else:
     kimi_api_key = os.getenv("KIMI_API_KEY", "").strip()
     kimi_model = os.getenv("KIMI_MODEL", "kimi-k2.6").strip()
     
-    with st.expander("Kimi API 配置", expanded=not kimi_api_key):
-        kimi_api_key = st.text_input("KIMI_API_KEY", value=kimi_api_key, type="password")
-        kimi_model = st.text_input("KIMI_MODEL", value=kimi_model)
-    
     if not kimi_api_key:
-        st.error("未检测到 KIMI_API_KEY。请在配置项中输入或在 Secrets 中配置。")
+        st.error("未检测到 KIMI_API_KEY。请在 Streamlit Secrets 中配置。")
         
     # 语言映射使用 Kimi 的（通常两者一致，但以对应引擎为准）
     TO_LANG_MAP = kimi_bt.TO_LANG_MAP
