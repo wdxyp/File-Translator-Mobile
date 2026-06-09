@@ -1458,18 +1458,25 @@ def check_direction_mismatch(input_file, direction=None):
         has_english = bool(re.search(r'[a-zA-Z]{3,}', sample_text)) 
 
         warning_reason = ""
-        # 核心预警逻辑：如果检测到的语言 既不是源语言 也不是 目标语言，则报警
-        if has_chinese and from_lang != 'zh' and to_lang not in ('zh', 'zh_tw'):
-            warning_reason = "中文"
-        elif has_korean and from_lang != 'kor' and to_lang != 'kor':
-            warning_reason = "韩文"
-        elif has_japanese and from_lang != 'ja' and to_lang != 'ja':
-            warning_reason = "日文"
-        elif has_english and from_lang != 'en' and to_lang != 'en':
-            # 英文报警稍微严谨一点：只有当本该出现的源语言完全没出现时才报警
-            if from_lang == 'kor' and not has_korean: warning_reason = "英文"
-            elif from_lang == 'zh' and not has_chinese: warning_reason = "英文"
-            elif from_lang == 'ja' and not has_japanese: warning_reason = "英文"
+        # --- [改进版防呆逻辑] ---
+        # 1. 如果检测到目标语言特征，但完全没有源语言特征 -> 判定为方向选反或选错
+        if has_chinese and to_lang in ('zh', 'zh_tw') and not has_korean and from_lang == 'kor':
+            warning_reason = "中文 (看起来您上传了中文文件，但选择了韩翻中方向)"
+        elif has_korean and to_lang == 'kor' and not has_chinese and from_lang == 'zh':
+            warning_reason = "韩文 (看起来您上传了韩文文件，但选择了中翻韩方向)"
+        
+        # 2. 通用兜底逻辑：如果检测到的语言既不是源语言也不是目标语言
+        if not warning_reason:
+            if has_chinese and from_lang != 'zh' and to_lang not in ('zh', 'zh_tw'):
+                warning_reason = "中文"
+            elif has_korean and from_lang != 'kor' and to_lang != 'kor':
+                warning_reason = "韩文"
+            elif has_japanese and from_lang != 'ja' and to_lang != 'ja':
+                warning_reason = "日文"
+            elif has_english and from_lang != 'en' and to_lang != 'en':
+                # 只有当本该出现的源语言完全没出现时才对英文报警
+                if from_lang == 'kor' and not has_korean: warning_reason = "英文"
+                elif from_lang == 'zh' and not has_chinese: warning_reason = "英文"
 
         return warning_reason if warning_reason else None
     except Exception as e:
