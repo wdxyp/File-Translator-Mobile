@@ -179,6 +179,7 @@ if uploaded_file is not None:
     
     # 获取文件语言特征
     langs = _get_file_languages(uploaded_file.getvalue(), uploaded_file.name)
+    st.write(f"DEBUG: {langs}") # 强制显示调试信息
     
     if langs:
         # 借用当前引擎的判定逻辑
