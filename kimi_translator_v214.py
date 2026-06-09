@@ -1455,7 +1455,7 @@ def check_direction_mismatch(input_file, direction=None):
         has_chinese = bool(CHINESE_RE.search(sample_text))
         has_japanese = bool(re.search(r'[\u3040-\u30ff]', sample_text))
         # 检测连续的英文字母，排除掉零散的符号
-        has_english = bool(re.search(r'[a-zA-Z]{5,}', sample_text)) 
+        has_english = bool(re.search(r'[a-zA-Z]{3,}', sample_text)) 
 
         warning_reason = ""
         # 核心预警逻辑：如果检测到的语言 既不是源语言 也不是 目标语言，则报警
