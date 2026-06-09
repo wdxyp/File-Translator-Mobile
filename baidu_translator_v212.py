@@ -862,13 +862,21 @@ def check_direction_mismatch(input_file, direction=None):
         ext = os.path.splitext(input_file)[1].lower()
         if ext == '.docx':
             doc = Document(input_file)
-            # 取前5个段落
-            sample_text = "\n".join([p.text for p in doc.paragraphs[:5] if p.text.strip()])
+            # 扫描前 20 个段落
+            texts = [p.text for p in doc.paragraphs[:20] if p.text.strip()]
+            # 扫描前 5 个表格的内容
+            for table in doc.tables[:5]:
+                for row in table.rows:
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            texts.append(cell.text)
+            sample_text = "\n".join(texts)
         elif ext == '.xlsx':
             wb = load_workbook(input_file, read_only=True, data_only=True)
             ws = wb.active
             cells = []
-            for row in ws.iter_rows(max_row=10):
+            # 扫描前 50 行
+            for row in ws.iter_rows(max_row=50):
                 for cell in row:
                     if cell.value and isinstance(cell.value, str):
                         cells.append(str(cell.value))
@@ -876,7 +884,8 @@ def check_direction_mismatch(input_file, direction=None):
         elif ext == '.ppt' or ext == '.pptx':
             prs = Presentation(input_file)
             texts = []
-            for slide in prs.slides[:3]:
+            # 扫描前 10 张幻灯片
+            for slide in prs.slides[:10]:
                 for shape in slide.shapes:
                     if shape.has_text_frame:
                         texts.append(shape.text_frame.text)
@@ -889,29 +898,26 @@ def check_direction_mismatch(input_file, direction=None):
         has_korean = bool(HANGUL_RE.search(sample_text))
         has_chinese = bool(CHINESE_RE.search(sample_text))
         has_japanese = bool(re.search(r'[\u3040-\u30ff]', sample_text))
-        # 检测连续的英文字母，排除掉零散的符号
+        # 检测连续的英文字母
         has_english = bool(re.search(r'[a-zA-Z]{3,}', sample_text)) 
 
         warning_reason = ""
         # --- [改进版防呆逻辑] ---
-        # 1. 如果检测到目标语言特征，但完全没有源语言特征 -> 判定为方向选反或选错
-        if has_chinese and to_lang in ('zh', 'zh_tw') and not has_korean and from_lang == 'kor':
-            warning_reason = "中文 (看起来您上传了中文文件，但选择了韩翻中方向)"
-        elif has_korean and to_lang == 'kor' and not has_chinese and from_lang == 'zh':
-            warning_reason = "韩文 (看起来您上传了韩文文件，但选择了中翻韩方向)"
+        # 情况 A: 选了韩翻中，但全是中文，没有韩文
+        if from_lang == 'kor' and to_lang in ('zh', 'zh_tw') and has_chinese and not has_korean:
+            warning_reason = "内容似乎已经是 [中文]，但您选择了 [韩 -> 中]"
+        # 情况 B: 选了中翻韩，但全是韩文，没有中文
+        elif from_lang == 'zh' and to_lang == 'kor' and has_korean and not has_chinese:
+            warning_reason = "内容似乎已经是 [韩文]，但您选择了 [中 -> 韩]"
+        # 情况 C: 选了韩翻X，但没有韩文，且有日文或英文
+        elif from_lang == 'kor' and not has_korean:
+            if has_japanese: warning_reason = "内容似乎是 [日文]，与 [韩语] 源语种不符"
+            elif has_english and to_lang != 'en': warning_reason = "内容似乎是 [英文]，与 [韩语] 源语种不符"
         
-        # 2. 通用兜底逻辑：如果检测到的语言既不是源语言也不是目标语言
-        if not warning_reason:
-            if has_chinese and from_lang != 'zh' and to_lang not in ('zh', 'zh_tw'):
-                warning_reason = "中文"
-            elif has_korean and from_lang != 'kor' and to_lang != 'kor':
-                warning_reason = "韩文"
-            elif has_japanese and from_lang != 'ja' and to_lang != 'ja':
-                warning_reason = "日文"
-            elif has_english and from_lang != 'en' and to_lang != 'en':
-                # 只有当本该出现的源语言完全没出现时才对英文报警
-                if from_lang == 'kor' and not has_korean: warning_reason = "英文"
-                elif from_lang == 'zh' and not has_chinese: warning_reason = "英文"
+        # 情况 D: 选了中翻X，但没有中文
+        elif from_lang == 'zh' and not has_chinese:
+            if has_korean: warning_reason = "内容似乎是 [韩文]，与 [中文] 源语种不符"
+            elif has_japanese: warning_reason = "内容似乎是 [日文]，与 [中文] 源语种不符"
 
         return warning_reason if warning_reason else None
     except Exception as e:
