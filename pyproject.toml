@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "baidu-translator-streamlit"
-version = "0.1.0"
+version = "2.0.0"
 description = "Streamlit app for Baidu long-sentence translation"
 authors = ["Your Name <email@example.com>"]
 package-mode = false
@@ -13,6 +13,7 @@ openpyxl = "*"
 python-docx = "*"
 python-pptx = "*"
 lxml = "*"
+pandas = "*"
 
 [build-system]
 requires = ["poetry-core>=1.6.0"]

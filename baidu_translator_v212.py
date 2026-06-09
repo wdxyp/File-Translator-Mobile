@@ -20,6 +20,7 @@ try:
 except Exception:
     pd = None
 import os
+import json
 import hashlib
 import random
 import string
@@ -27,6 +28,8 @@ import requests
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, Border, Alignment, PatternFill
 from docx import Document
+from docx.enum.text import WD_BREAK
+from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.oxml.ns import nsmap as DOCX_NSMAP
@@ -35,6 +38,7 @@ import re
 import time
 import threading
 import shutil
+import copy
 
 # 请替换为你自己的 APP ID 和密钥（建议通过环境变量注入，避免提交到仓库）
 APP_ID = os.getenv('BAIDU_APP_ID') or 'YOUR_APP_ID'
@@ -48,8 +52,31 @@ def configure_baidu(app_id=None, secret_key=None):
     if secret_key:
         SECRET_KEY = str(secret_key).strip()
 
+def _load_local_baidu_credentials():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    for filename in ("baidu_credentials.json", "baidu_credentials.local.json"):
+        path = os.path.join(base_dir, filename)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            app_id = str(data.get("BAIDU_APP_ID") or "").strip()
+            secret_key = str(data.get("BAIDU_SECRET_KEY") or "").strip()
+            if app_id and secret_key:
+                return app_id, secret_key
+        except Exception:
+            continue
+    return None, None
+
+if APP_ID == "YOUR_APP_ID" or SECRET_KEY == "YOUR_SECRET_KEY":
+    _app_id, _secret_key = _load_local_baidu_credentials()
+    if _app_id and _secret_key:
+        APP_ID = _app_id
+        SECRET_KEY = _secret_key
+
 # ==========================================
-# V2.11 (百度长语句翻译 - 稳定最终版)
+# V2.12 (PPT 更新）
 # ==========================================
 
 # 全局变量
@@ -64,6 +91,37 @@ class _ValueBox:
         return self._value
     def set(self, value):
         self._value = value
+# 扩大韩文匹配范围：包括预组合音节、基础辅音/元音、扩展字母等
+HANGUL_RE = re.compile(r"[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\ud7b0-\ud7ff]")
+# 扩大中文匹配范围：包括基本、扩展A、兼容汉字等
+CHINESE_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
+_translation_cache = {}  # 内存缓存：记录已翻译过的文本，避免重复请求 API
+
+def should_skip_translation(text, to_lang):
+    """
+    智能判断是否跳过翻译：
+    1. 如果目标是中文且原文已含中文，则跳过（满足用户：即使含部分韩文也不翻译中文）
+    2. 如果原文和目标语种特征一致，则跳过
+    """
+    if not text or not str(text).strip():
+        return True
+    
+    # 转换为字符串处理
+    text_s = str(text).strip()
+    
+    # 核心逻辑：如果目标是中文（简体/繁体），且原文中已经包含中文字符，则跳过翻译直接返回原文
+    if to_lang in ('zh', 'zh_tw') and CHINESE_RE.search(text_s):
+        return True
+        
+    # 如果目标是韩文，且原文全是韩文（不含中文），也可以考虑跳过
+    if to_lang == 'kor' and HANGUL_RE.search(text_s) and not CHINESE_RE.search(text_s):
+        return True
+        
+    # 如果目标是英文，且原文不含中韩文，则跳过
+    if to_lang == 'en' and not HANGUL_RE.search(text_s) and not CHINESE_RE.search(text_s):
+        return True
+        
+    return False
 
 FROM_LANG_MAP = {
     'zh2ko': 'zh', 'ko2zh': 'kor', 'ko2en': 'kor', 'zh2en': 'zh', 'en2zh': 'en',
@@ -122,6 +180,18 @@ def set_docx_run_font(run, font_name):
         return
     run.font.name = font_name
     set_docx_r_element_font(run._r, font_name)
+
+def apply_run_format(source_run, target_run):
+    """将 source_run 的所有格式（rPr）深度应用到 target_run"""
+    if not source_run or not target_run:
+        return
+    source_rPr = source_run._element.rPr
+    if source_rPr is not None:
+        new_rPr = copy.deepcopy(source_rPr)
+        target_r = target_run._element
+        if target_r.rPr is not None:
+            target_r.remove(target_r.rPr)
+        target_r.insert(0, new_rPr)
 
 def set_drawingml_rpr_element_font(a_rPr_element, font_name):
     if a_rPr_element is None or not font_name:
@@ -224,8 +294,15 @@ def apply_revisions(text):
 
 def baidu_translate(q, from_lang, to_lang):
     if not q or not q.strip(): return q
-    max_retries = 3
-    retry_delay = 2
+    
+    # 1. 检查内存缓存
+    cache_key = (from_lang, to_lang, str(q))
+    cached = _translation_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    max_retries = 5
+    retry_delay = 1.5
     retries = 0
     while retries < max_retries:
         try:
@@ -239,19 +316,39 @@ def baidu_translate(q, from_lang, to_lang):
             response = requests.get(API_URL, params=params, timeout=15)
             response.encoding = 'utf-8'
             result = response.json()
+            
             if 'trans_result' in result:
-                return result['trans_result'][0]['dst']
-            if 'error_code' in result:
-                retries += 1
-                if retries < max_retries:
-                    time.sleep(retry_delay * retries)
+                # 【核心修复】百度 API 返回的是一个列表，必须合并所有段落结果
+                # 否则如果输入包含换行符，只会得到第一行的翻译
+                dst_list = [item['dst'] for item in result['trans_result']]
+                dst = "\n".join(dst_list)
+                _translation_cache[cache_key] = dst  # 3. 写入缓存
+                return dst
+            
+            # 处理百度 API 错误码
+            error_code = str(result.get('error_code', ''))
+            if error_code:
+                error_msg = result.get('error_msg', 'Unknown Error')
+                # 54003: 访问频率受限, 54005: 长查询请求频繁
+                if error_code in ('54003', '54005'):
+                    retries += 1
+                    wait_time = retry_delay * (2 ** (retries - 1))
+                    print(f"[警告] 百度 API 频率限制 ({error_code}: {error_msg})，第 {retries} 次重试，等待 {wait_time:.1f}s...")
+                    time.sleep(wait_time)
                     continue
-                return q
+                else:
+                    print(f"[错误] 百度 API 报错 ({error_code}: {error_msg})")
+                    break # 其他错误（如 52003 账户欠费）不再重试
+            
             return q
-        except Exception:
+        except Exception as e:
             retries += 1
             if retries < max_retries:
-                time.sleep(retry_delay * retries)
+                wait_time = retry_delay * (2 ** (retries - 1))
+                print(f"[错误] 网络异常 ({type(e).__name__})，第 {retries} 次重试...")
+                time.sleep(wait_time)
+            else:
+                print(f"[错误] 翻译请求最终失败: {e}")
     return q
 
 def get_translation(text):
@@ -260,7 +357,10 @@ def get_translation(text):
     from_lang = FROM_LANG_MAP.get(direction, 'auto')
     to_lang = TO_LANG_MAP.get(direction, 'auto')
     
-    # 百度长句翻译
+    # --- [新增] 智能跳过逻辑 ---
+    if should_skip_translation(text, to_lang):
+        return text
+    
     translated_text = baidu_translate(text, from_lang, to_lang)
     # 事后校准
     translated_text = apply_revisions(translated_text)
@@ -352,12 +452,7 @@ def translate_shape_for_ppt(shape):
 
 def update_ui_status(msg):
     """线程安全地更新 UI 状态"""
-    r = globals().get("root")
-    lbl = globals().get("status_label")
-    if r is not None and hasattr(r, "after") and lbl is not None:
-        r.after(0, lambda: lbl.config(text=msg))
-    else:
-        print(f"[进度] {msg}")
+    root.after(0, lambda: status_label.config(text=msg))
 
 def translate_ppt(input_file, output_file):
     prs = Presentation(input_file)
@@ -449,22 +544,20 @@ def translate_excel_xlsx(input_file, output_file):
                     # 恢复原格式
                     target_font_name = get_target_font_name()
                     if target_font_name:
-                        try:
-                            cell.font = original_font.copy(name=target_font_name)
-                        except Exception:
-                            cell.font = Font(
-                                name=target_font_name,
-                                size=original_font.size,
-                                bold=original_font.bold,
-                                italic=original_font.italic,
-                                underline=original_font.underline,
-                                color=original_font.color,
-                            )
+                        cell.font = Font(
+                            name=target_font_name,
+                            size=original_font.size,
+                            bold=original_font.bold,
+                            italic=original_font.italic,
+                            underline=original_font.underline,
+                            color=original_font.color,
+                        )
                     else:
                         cell.font = original_font
                     cell.border = original_border
                     cell.alignment = original_alignment
                     cell.fill = original_fill
+                    # 设置单元格自动换行
                     cell.alignment = Alignment(wrap_text=True, vertical='center')
     # 保存修改后的工作簿
     wb.save(output_file)
@@ -473,8 +566,6 @@ def translate_excel_xlsx(input_file, output_file):
 
 def translate_excel_xls(input_file, output_file):
     """处理.xls格式的Excel文件，使用pandas库，保存为.xlsx格式"""
-    if pd is None:
-        raise RuntimeError("处理 .xls 需要 pandas（以及其依赖）。请改用 .xlsx，或在运行环境中安装 pandas。")
     base_output = os.path.splitext(output_file)[0]
     output_file_xlsx = base_output + '.xlsx'
     target_font_name = get_target_font_name()
@@ -543,19 +634,14 @@ def translate_excel_xls(input_file, output_file):
                 for row in ws.iter_rows():
                     for cell in row:
                         if cell.value and isinstance(cell.value, str):
-                            try:
-                                cell.font = cell.font.copy(name=target_font_name)
-                            except Exception:
-                                cell.font = Font(
-                                    name=target_font_name,
-                                    size=cell.font.size,
-                                    bold=cell.font.bold,
-                                    italic=cell.font.italic,
-                                    underline=cell.font.underline,
-                                    color=cell.font.color,
-                                )
-                        if cell.value and isinstance(cell.value, str):
-                            cell.alignment = Alignment(wrap_text=True, vertical='center')
+                            cell.font = Font(
+                                name=target_font_name,
+                                size=cell.font.size,
+                                bold=cell.font.bold,
+                                italic=cell.font.italic,
+                                underline=cell.font.underline,
+                                color=cell.font.color,
+                            )
             wb.save(output_file_xlsx)
         except Exception:
             pass
@@ -566,6 +652,8 @@ def translate_excel_xls(input_file, output_file):
 def translate_word(input_file, output_file):
     doc = Document(input_file)
     target_font_name = get_target_font_name()
+    # 核心：使用集合记录已处理的 XML 元素对象，防止重复翻译
+    processed_elements = set()
 
     def set_style_font(style_element, font_name):
         if style_element is None or not font_name:
@@ -589,191 +677,245 @@ def translate_word(input_file, output_file):
                 pass
 
     def translate_word_paragraph(paragraph):
+        """通用段落翻译逻辑：支持对照模式、换行符、字体设置、图片保留"""
+        p_id = id(paragraph._element)
+        if p_id in processed_elements:
+            return
+        processed_elements.add(p_id)
+
         full_text = paragraph.text
         if not full_text or not str(full_text).strip():
             return
 
-        normalized = str(full_text).replace("\r\n", "\n").replace("\r", "\n")
-        t = get_translation(normalized)
+        # --- 捕捉原句的模板 Run (用于对照模式下的格式克隆) ---
+        template_run = paragraph.runs[0] if paragraph.runs else None
+        
+        # 使用 splitlines() 更加稳健地处理 \r, \n, \v 等换行符
+        lines = [line.strip() for line in full_text.splitlines() if line.strip()]
+        if not lines:
+            return
 
-        original_texts.append(normalized)
-        translated_texts.append(t)
+        print(f"[处理] Word 段落 ({len(lines)} 行): {lines[0][:30]}...")
 
-        result_text = append_translation_to_original(normalized, t) if append_translation.get() else t
-
-        drawings = []
-        for run in paragraph.runs:
-            for inline in xpath_with_ns(run.element, './/w:drawing'):
-                pic_elements = xpath_with_ns(inline, './/a:blip/@r:embed')
-                if pic_elements:
-                    drawings.append(inline)
-
-        if paragraph.runs:
-            first_run = paragraph.runs[0]
+        if append_translation.get():
+            # 【对照模式优化：行对行对照】
+            translated_lines = []
+            for line in lines:
+                t = get_translation(line)
+                translated_lines.append(t)
+            
+            # 记录语料库
+            for orig, trans in zip(lines, translated_lines):
+                original_texts.append(orig)
+                translated_texts.append(trans)
+            
+            # 清空段落所有内容
+            p_el = paragraph._element
+            for r in p_el.xpath('./w:r'):
+                p_el.remove(r)
+            
+            # 重新填充
+            for i, (orig, trans) in enumerate(zip(lines, translated_lines)):
+                # 1. 写入原文 (应用模板格式)
+                run_orig = paragraph.add_run(orig)
+                if template_run:
+                    apply_run_format(template_run, run_orig)
+                
+                run_orig.add_break(WD_BREAK.LINE)
+                
+                # 2. 写入译文 (应用模板格式，并覆盖目标字体)
+                run_trans = paragraph.add_run(trans)
+                if template_run:
+                    apply_run_format(template_run, run_trans)
+                
+                if target_font_name:
+                    set_docx_run_font(run_trans, target_font_name)
+                
+                # 组间换行
+                if i < len(lines) - 1:
+                    run_trans.add_break(WD_BREAK.LINE)
         else:
-            first_run = paragraph.add_run()
-
-        first_run.text = result_text
-        if target_font_name:
-            set_docx_run_font(first_run, target_font_name)
-
-        for run in paragraph.runs[1:]:
-            has_drawing = bool(xpath_with_ns(run.element, './/w:drawing'))
-            if not has_drawing:
-                run.text = ""
-
-        for inline in drawings:
-            new_run = paragraph.add_run()
-            new_run._r.append(inline)
-    
-    # 处理普通段落 (完全还原 V2.9 逻辑)
-    total_paragraphs = len(doc.paragraphs)
-    for i, paragraph in enumerate(doc.paragraphs, 1):
-        if i % 5 == 0:
-            msg = f"正在翻译 Word: 段落 {i}/{total_paragraphs}..."
-            print(f"[进度] {msg}")
-            update_ui_status(msg)
-        translate_word_paragraph(paragraph)
-    
-    # 处理表格 (完全还原 V2.9 逻辑)
-    total_tables = len(doc.tables)
-    for i, table in enumerate(doc.tables, 1):
-        msg = f"正在翻译 Word: 表格 {i}/{total_tables}..."
-        print(f"[进度] {msg}")
-        update_ui_status(msg)
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    translate_word_paragraph(paragraph)
-    
-    # 处理形状中的文字 (完全还原 V2.9 逻辑)
-    for shape in doc.inline_shapes:
-        try:
-            # 通过 XML 访问形状中的文本
-            if hasattr(shape, '_inline') and hasattr(shape._inline, 'graphic'):
-                graphic_data = shape._inline.graphic.graphicData
-                if hasattr(graphic_data, 'txBody') and graphic_data.txBody:
-                    for p in graphic_data.txBody.p:
-                        for r in p.r:
-                            if hasattr(r, 't'):
-                                text = r.t
-                                if text and text.strip():  # 只翻译非空文本
-                                    # 先获取翻译结果
-                                    t = get_translation(text)
-                                    
-                                    # 收集翻译前后的文本
-                                    original_texts.append(text)
-                                    translated_texts.append(t)
-                                    if append_translation.get():
-                                        r.t = append_translation_to_original(text, t)
-                                    else:
-                                        r.t = t
-                                    if target_font_name:
-                                        set_drawingml_r_element_font(r, target_font_name)
-        except Exception:
-            continue
-    doc_element_list = [doc.element]
-    for section in doc.sections:
-        doc_element_list.extend([
-            section.header._element,
-            section.footer._element,
-            section.first_page_header._element,
-            section.first_page_footer._element,
-            section.even_page_header._element,
-            section.even_page_footer._element,
-        ])
-    for doc_element in doc_element_list:
-        for t_node in xpath_with_ns(doc_element, './/w:txbxContent//w:t'):
-            text = t_node.text
-            if not text or not text.strip():
-                continue
-            t = get_translation(text)
-            original_texts.append(text)
+            # 【替换模式】
+            normalized = "\n".join(lines)
+            t = get_translation(normalized)
+            original_texts.append(normalized)
             translated_texts.append(t)
-            t_node.text = append_translation_to_original(text, t) if append_translation.get() else t
-            if not target_font_name:
-                continue
-            r_element = t_node
-            while r_element is not None and r_element.tag != qn('w:r'):
-                r_element = r_element.getparent()
-            if r_element is not None:
-                set_docx_r_element_font(r_element, target_font_name)
-        if not append_translation.get():
-            for txbx in xpath_with_ns(doc_element, './/w:txbxContent'):
-                t_nodes = xpath_with_ns(txbx, './/w:t')
-                if not t_nodes:
-                    continue
-                combined = ''.join([(n.text or '') for n in t_nodes])
-                revised = apply_revisions(combined)
-                if revised != combined:
-                    t_nodes[0].text = revised
-                    for n in t_nodes[1:]:
-                        n.text = ''
-                    if target_font_name:
-                        r_element = t_nodes[0]
-                        while r_element is not None and r_element.tag != qn('w:r'):
-                            r_element = r_element.getparent()
-                        if r_element is not None:
-                            set_docx_r_element_font(r_element, target_font_name)
-        for t_node in doc_element.xpath(f'.//*[namespace-uri()="{A_NS}" and local-name()="txBody"]//*[namespace-uri()="{A_NS}" and local-name()="t"]'):
-            text = t_node.text
-            if not text or not text.strip():
-                continue
-            t = get_translation(text)
-            original_texts.append(text)
-            translated_texts.append(t)
-            t_node.text = append_translation_to_original(text, t) if append_translation.get() else t
-            if not target_font_name:
-                continue
-            a_r_element = t_node
-            while a_r_element is not None and a_r_element.tag != f'{{{A_NS}}}r':
-                a_r_element = a_r_element.getparent()
-            if a_r_element is not None:
-                set_drawingml_r_element_font(a_r_element, target_font_name)
-        if not append_translation.get():
-            for a_txbody in doc_element.xpath(f'.//*[namespace-uri()="{A_NS}" and local-name()="txBody"]'):
-                t_nodes = a_txbody.xpath(f'.//*[namespace-uri()="{A_NS}" and local-name()="t"]')
-                if not t_nodes:
-                    continue
-                combined = ''.join([(n.text or '') for n in t_nodes])
-                revised = apply_revisions(combined)
-                if revised != combined:
-                    t_nodes[0].text = revised
-                    for n in t_nodes[1:]:
-                        n.text = ''
-                    if target_font_name:
-                        a_r_element = t_nodes[0]
-                        while a_r_element is not None and a_r_element.tag != f'{{{A_NS}}}r':
-                            a_r_element = a_r_element.getparent()
-                        if a_r_element is not None:
-                            set_drawingml_r_element_font(a_r_element, target_font_name)
-        if target_font_name:
+            
+            if paragraph.runs:
+                first_run = paragraph.runs[0]
+                first_run.text = t
+                for r in paragraph.runs[1:]:
+                    if not bool(xpath_with_ns(r.element, './/w:drawing')):
+                        r.text = ""
+                if target_font_name:
+                    set_docx_run_font(first_run, target_font_name)
+            else:
+                new_run = paragraph.add_run(t)
+                if target_font_name:
+                    set_docx_run_font(new_run, target_font_name)
+
+    def process_xml_container(container_el):
+        """深度遍历 XML 容器中的所有段落和文本节点，确保顺序一致"""
+        # 1. 查找所有标准段落 <w:p>
+        # 这涵盖了：正文、表格单元格、文本框中的所有段落
+        for p_el in container_el.xpath('.//w:p'):
             try:
-                for s in doc.styles:
-                    try:
-                        if getattr(s, "font", None) is not None:
-                            s.font.name = target_font_name
-                    except Exception:
-                        pass
-                    try:
-                        set_style_font(getattr(s, "_element", None), target_font_name)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                p_obj = Paragraph(p_el, doc)
+                translate_word_paragraph(p_obj)
+            except Exception as e:
+                print(f"[警告] 处理段落 XML 失败: {e}")
 
-            for r_element in xpath_with_ns(doc_element, './/w:r'):
-                set_docx_r_element_font(r_element, target_font_name)
-            for r_element in xpath_with_ns(doc_element, './/w:txbxContent//w:r'):
-                set_docx_r_element_font(r_element, target_font_name)
-            for a_rpr_element in doc_element.xpath(f'.//*[namespace-uri()="{A_NS}" and (local-name()="rPr" or local-name()="defRPr" or local-name()="endParaRPr")]'):
-                set_drawingml_rpr_element_font(a_rpr_element, target_font_name)
+        # 2. 查找所有图形文字段落 <a:p> (DrawingML)
+        # 针对图片内部、形状内部的特殊文字结构
+        for p_el in container_el.xpath('.//a:p'):
+            if p_el in processed_elements:
+                continue
+            processed_elements.add(p_el)
+            
+            t_nodes = p_el.xpath('.//a:t')
+            if not t_nodes: continue
+            
+            combined_text = "".join([node.text for node in t_nodes if node.text])
+            if not combined_text.strip(): continue
+            
+            t = get_translation(combined_text)
+            original_texts.append(combined_text)
+            translated_texts.append(t)
+            
+            if append_translation.get():
+                # DrawingML 换行修复
+                t_nodes[0].text = combined_text
+                for n in t_nodes[1:]: n.text = ""
+                r_nodes = p_el.xpath('.//a:r')
+                if r_nodes:
+                    last_r = r_nodes[0]
+                    br = OxmlElement('a:br')
+                    last_r.addnext(br)
+                    new_r = OxmlElement('a:r')
+                    new_t = OxmlElement('a:t')
+                    new_t.text = t
+                    new_r.append(new_t)
+                    br.addnext(new_r)
+                    if target_font_name:
+                        set_drawingml_r_element_font(new_r, target_font_name)
+            else:
+                t_nodes[0].text = t
+                for n in t_nodes[1:]: n.text = ""
+
+    # --- 执行统一遍历 ---
+    
+    # A. 处理正文内容 (含表格、文本框、图形)
+    print(f"[系统] 正在按顺序扫描 Word 正文...")
+    process_xml_container(doc.element.body)
+
+    # B. 处理所有页眉和页脚
+    for i, section in enumerate(doc.sections, 1):
+        for header in [section.header, section.first_page_header, section.even_page_header]:
+            if header: process_xml_container(header._element)
+        for footer in [section.footer, section.first_page_footer, section.even_page_footer]:
+            if footer: process_xml_container(footer._element)
+
+    # C. 全局字体统一加固 (仅针对非对照模式，或者作为样式兜底)
+    if target_font_name:
+        try:
+            # 1. 优先设置样式表字体
+            for s in doc.styles:
+                try:
+                    if getattr(s, "font", None) is not None:
+                        s.font.name = target_font_name
+                except Exception: pass
+                try:
+                    set_style_font(getattr(s, "_element", None), target_font_name)
+                except Exception: pass
+            
+            # 2. 注意：移除对所有 w:r 的强制刷字体，防止覆盖对照模式下的原文原字体
+            # 如果是非对照模式，可以保留这个全局刷
+            if not append_translation.get():
+                for r in doc.element.xpath('.//w:r'):
+                    set_docx_r_element_font(r, target_font_name)
+            
+            # 图形文字 (DrawingML) 通常需要强制刷，因为它们往往没有复杂的混合样式
+            for r in doc.element.xpath('.//a:r'):
+                set_drawingml_r_element_font(r, target_font_name)
+        except Exception: pass
 
     doc.save(output_file)
-    # 翻译完成后调用保存语料库函数
     save_to_corpus(original_texts, translated_texts)
 
 # --- 线程控制 ---
+
+def check_direction_mismatch(input_file):
+    """
+    预检：如果翻译方向和文件内容明显不匹配，弹出预警
+    """
+    try:
+        direction = translation_direction.get()
+        from_lang = FROM_LANG_MAP.get(direction)
+        to_lang = TO_LANG_MAP.get(direction)
+        
+        sample_text = ""
+        ext = os.path.splitext(input_file)[1].lower()
+        if ext == '.docx':
+            doc = Document(input_file)
+            # 取前5个段落
+            sample_text = "\n".join([p.text for p in doc.paragraphs[:5] if p.text.strip()])
+        elif ext == '.xlsx':
+            wb = load_workbook(input_file, read_only=True, data_only=True)
+            ws = wb.active
+            cells = []
+            for row in ws.iter_rows(max_row=10):
+                for cell in row:
+                    if cell.value and isinstance(cell.value, str):
+                        cells.append(str(cell.value))
+            sample_text = "\n".join(cells)
+        elif ext == '.ppt' or ext == '.pptx':
+            prs = Presentation(input_file)
+            texts = []
+            for slide in prs.slides[:3]:
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        texts.append(shape.text_frame.text)
+            sample_text = "\n".join(texts)
+
+        if not sample_text.strip():
+            return True
+
+        # --- [优化] 更加通用的语言特征预检 ---
+        has_korean = bool(HANGUL_RE.search(sample_text))
+        has_chinese = bool(CHINESE_RE.search(sample_text))
+        has_japanese = bool(re.search(r'[\u3040-\u30ff]', sample_text))
+        # 检测连续的英文字母，排除掉零散的符号
+        has_english = bool(re.search(r'[a-zA-Z]{5,}', sample_text)) 
+
+        # 构造易读的方向标签
+        dir_labels = {
+            'ko2zh': '韩 -> 中', 'zh2ko': '中 -> 韩', 'ko2vi': '韩 -> 越', 'ko2en': '韩 -> 英',
+            'zh2en': '中 -> 英', 'en2zh': '英 -> 中', 'zh_tw2en': '繁中 -> 英', 'en2zh_tw': '英 -> 繁中',
+            'zh2ja': '中 -> 日', 'ja2zh': '日 -> 中', 'en2ko': '英 -> 韩', 'vi2zh': '越 -> 中'
+        }
+        current_dir_label = dir_labels.get(direction, direction)
+
+        warning_reason = ""
+        # 核心预警逻辑：如果检测到的语言 既不是源语言 也不是 目标语言，则报警
+        if has_chinese and from_lang != 'zh' and to_lang not in ('zh', 'zh_tw'):
+            warning_reason = "中文"
+        elif has_korean and from_lang != 'kor' and to_lang != 'kor':
+            warning_reason = "韩文"
+        elif has_japanese and from_lang != 'ja' and to_lang != 'ja':
+            warning_reason = "日文"
+        elif has_english and from_lang != 'en' and to_lang != 'en':
+            # 英文报警稍微严谨一点：只有当本该出现的源语言完全没出现时才报警
+            if from_lang == 'kor' and not has_korean: warning_reason = "英文"
+            elif from_lang == 'zh' and not has_chinese: warning_reason = "英文"
+            elif from_lang == 'ja' and not has_japanese: warning_reason = "英文"
+
+        if warning_reason:
+            return messagebox.askyesno("预警", f"检测到当前翻译方向为 [{current_dir_label}]，但文件内容似乎是 {warning_reason}（既非源语言也非目标语言）。\n\n是否继续执行翻译？")
+        
+        return True
+    except Exception as e:
+        print(f"[预检] 预检过程出错: {e}")
+        return True
 
 def start_translation():
     input_file = input_file_entry.get()
@@ -781,6 +923,11 @@ def start_translation():
     if not (input_file and output_folder):
         messagebox.showwarning("提示", "请完整选择输入文件和输出目录")
         return
+    
+    # --- [新增] 翻译方向预检 ---
+    if not check_direction_mismatch(input_file):
+        return
+    
     translate_button.config(state=tk.DISABLED, text="🚀 正在翻译，请稍候...")
     status_label.config(text="任务已启动，请查看终端进度...", foreground="#2980b9")
     thread = threading.Thread(target=run_translation_task, args=(input_file, output_folder))
@@ -788,13 +935,14 @@ def start_translation():
     thread.start()
 
 def run_translation_task(input_file, output_folder):
+    start_time = time.time()
     try:
         global revision_map
         file_ext = os.path.splitext(input_file)[1].lower()
         custom_name = custom_filename_entry.get().strip()
-        output_file = os.path.join(output_folder, (custom_name if custom_name else f"translated_v2.11_{os.path.basename(input_file).split('.')[0]}") + file_ext)
+        output_file = os.path.join(output_folder, (custom_name if custom_name else f"translated_v2.12_{os.path.basename(input_file).split('.')[0]}") + file_ext)
         
-        # --- [V2.11 增强功能：物理克隆以保留图片和绘图] ---
+        # --- [V2.12 增强功能：物理克隆以保留图片和绘图] ---
         # 即使 V2.9 也不支持 Excel 绘图保留，这里通过物理复制尝试最大化兼容性
         try:
             if os.path.exists(output_file):
@@ -817,17 +965,20 @@ def run_translation_task(input_file, output_folder):
             output_file = translate_excel_xls(input_file, output_file)
         elif file_ext == '.docx': translate_word(output_file, output_file)
         
-        print(f"[完成] 文件已保存至: {output_file}\n")
-        root.after(0, lambda: translation_done_callback(output_file))
+        end_time = time.time()
+        duration_minutes = (end_time - start_time) / 60
+        print(f"[完成] 文件已保存至: {output_file}")
+        print(f"[统计] 翻译总耗时: {duration_minutes:.2f} 分钟\n")
+        root.after(0, lambda: translation_done_callback(output_file, duration_minutes))
     except Exception as e:
         err_msg = str(e)
         print(f"[错误] 详情: {err_msg}")
         root.after(0, lambda: translation_failed_callback(err_msg))
 
-def translation_done_callback(output_file):
+def translation_done_callback(output_file, duration_minutes):
     translate_button.config(state=tk.NORMAL, text="🚀 开始长句翻译任务")
-    status_label.config(text=f"翻译任务已圆满完成！", foreground="#27ae60")
-    messagebox.showinfo("成功", f"翻译完成！\n文件保存至：{output_file}")
+    status_label.config(text=f"翻译任务已圆满完成！(用时 {duration_minutes:.2f} 分钟)", foreground="#27ae60")
+    messagebox.showinfo("成功", f"翻译完成！\n用时：{duration_minutes:.2f} 分钟\n文件保存至：{output_file}")
 
 def translation_failed_callback(error_msg):
     translate_button.config(state=tk.NORMAL, text="🚀 开始长句翻译任务")
@@ -842,8 +993,7 @@ def save_to_corpus(orig, trans):
             direction = translation_direction.get()
         except Exception:
             direction = "unknown"
-        corpus_file = f'Corpus/Corpus_v2.11_{direction}_{timestamp}.xlsx'
-
+        corpus_file = f'Corpus/Corpus_v2.12_{direction}_{timestamp}.xlsx'
         to_lang = TO_LANG_MAP.get(direction)
         seen = set()
         filtered_orig = []
@@ -855,14 +1005,31 @@ def save_to_corpus(orig, trans):
             t = str(t).replace("\r\n", "\n").replace("\r", "\n").strip()
             if not o or not t:
                 continue
-            if to_lang in ("zh", "zh_tw") and re.search(r"[\u4e00-\u9fff]", o):
-                continue
+
+            # 3. 原文=译文 不记录
             if o == t:
                 continue
-            if not re.search(r"[\uac00-\ud7a3]", o) and re.search(r"[A-Za-z0-9]", o):
-                continue
-            if not re.search(r"[\uac00-\ud7a3\u4e00-\u9fff]", o) and not re.search(r"[A-Za-z0-9]", o):
-                continue
+
+            # 检查语言特征
+            has_korean = bool(HANGUL_RE.search(o))
+            has_chinese = bool(CHINESE_RE.search(o))
+
+            # 1. 核心准则：只要含有韩文就要记录 (满足 "原文只要含有韩文就要记录")
+            if has_korean:
+                pass 
+            else:
+                # 如果不含韩文：
+                # A. 如果包含中文，且目标是中文 (针对韩翻中方向) -> 不记录 (即 "纯中文不录")
+                # 注意：如果包含中文但目标不是中文 (如中翻韩、中翻英)，则记录
+                if has_chinese and to_lang in ("zh", "zh_tw"):
+                    continue
+                
+                # B. 如果既不含韩文也不含中文 -> 说明只有数字、英文、符号的组合 -> 不记录
+                # 这完全符合 "数字/英文/符号 只有全部是的时候才能不记录"
+                if not has_chinese:
+                    continue
+
+            # 只要包含韩文，或者满足上述条件的非韩文行，都进入去重检查
             key = o
             if key in seen:
                 continue
@@ -873,16 +1040,9 @@ def save_to_corpus(orig, trans):
         if not filtered_orig:
             return
 
-        if pd is not None:
-            pd.DataFrame({'序号': range(1, len(filtered_orig)+1), '翻译前': filtered_orig, '翻译后': filtered_trans}).to_excel(corpus_file, index=False)
-            return
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Corpus"
-        ws.append(["序号", "翻译前", "翻译后"])
-        for i, (o, t) in enumerate(zip(filtered_orig, filtered_trans), 1):
-            ws.append([i, o, t])
-        wb.save(corpus_file)
+        pd.DataFrame(
+            {'序号': range(1, len(filtered_orig) + 1), '翻译前': filtered_orig, '翻译后': filtered_trans}
+        ).to_excel(corpus_file, index=False)
 
 def translate_file(input_file, output_dir=None, name="", direction="ko2zh", append=False, corpus=False, revision_file="revision.md", app_id=None, secret_key=None):
     global translation_direction, append_translation, generate_corpus, revision_map
@@ -925,61 +1085,10 @@ def translate_file(input_file, output_dir=None, name="", direction="ko2zh", appe
 
     return output_file
 
-def _run_cli():
-    global translation_direction, append_translation, generate_corpus, revision_map
-    parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument("-i", "--input", required=True, help="输入文件路径（.pptx/.ppt/.docx/.xlsx/.xls）")
-    parser.add_argument("-o", "--output-dir", default="", help="输出目录（默认同输入文件目录）")
-    parser.add_argument("--name", default="", help="自定义输出文件名（不带扩展名）")
-    parser.add_argument("--direction", default="ko2zh", choices=sorted(TO_LANG_MAP.keys()), help="翻译方向")
-    parser.add_argument("--append", action="store_true", help="在原文下方追加翻译对照")
-    parser.add_argument("--corpus", action="store_true", help="生成 Corpus 语料库文件")
-    args = parser.parse_args()
-
-    input_file = os.path.abspath(args.input)
-    if not os.path.exists(input_file):
-        raise SystemExit(f"输入文件不存在: {input_file}")
-
-    output_dir = os.path.abspath(args.output_dir) if args.output_dir else os.path.dirname(input_file)
-    os.makedirs(output_dir, exist_ok=True)
-
-    translation_direction = _ValueBox(args.direction)
-    append_translation = _ValueBox(bool(args.append))
-    generate_corpus = _ValueBox(bool(args.corpus))
-
-    original_texts.clear()
-    translated_texts.clear()
-    revision_map = load_revision_dict("revision.md", silent=True)
-    print(f"\n[系统] 开始翻译任务: {os.path.basename(input_file)}")
-    print(f"[系统] 校准规则加载: {len(revision_map)} 条")
-
-    file_ext = os.path.splitext(input_file)[1].lower()
-    base_name = args.name.strip() if args.name.strip() else f"translated_v2.11_{os.path.basename(input_file).split('.')[0]}"
-    output_file = os.path.join(output_dir, base_name + file_ext)
-
-    if os.path.exists(output_file):
-        os.remove(output_file)
-    shutil.copy2(input_file, output_file)
-
-    if file_ext in ['.ppt', '.pptx']:
-        translate_ppt(output_file, output_file)
-    elif file_ext == '.xlsx':
-        translate_excel_xlsx(output_file, output_file)
-    elif file_ext == '.xls':
-        output_file = translate_excel_xls(input_file, output_file)
-    elif file_ext == '.docx':
-        translate_word(output_file, output_file)
-    else:
-        raise SystemExit(f"不支持的文件类型: {file_ext}")
-
-    print(f"[完成] 文件已保存至: {output_file}\n")
-
-def _run_gui():
-    global root, translation_direction, append_translation, generate_corpus
-    global input_file_entry, output_folder_entry, custom_filename_entry
-    global translate_button, status_label, revision_map
+# --- UI 布局 ---
+if __name__ == "__main__" and TK_AVAILABLE:
     root = tk.Tk()
-    root.title("百度长语句翻译工具 V2.11 (完善版)")
+    root.title("百度长语句翻译工具 V2.12 (PPT 更新）")
     root.geometry("700x850")
     root.configure(bg="#f5f6fa")
     style = ttk.Style()
@@ -1025,11 +1134,7 @@ def _run_gui():
     status_label = ttk.Label(main_frame, text="就绪：校准文件已自动挂载 (revision.md)", foreground="#7f8c8d")
     status_label.pack()
 
+    # 初始化加载一次即可
     revision_map = load_revision_dict("revision.md")
-    root.mainloop()
 
-if __name__ == "__main__":
-    if TK_AVAILABLE and len(sys.argv) == 1:
-        _run_gui()
-    else:
-        _run_cli()
+    root.mainloop()

@@ -12,7 +12,8 @@ from threading import Lock
 import requests
 import streamlit as st
 
-import baidu_Translator_v4_0 as bt
+import baidu_translator_v212 as baidu_bt
+import kimi_translator_v214 as kimi_bt
 
 
 APP_TITLE = "My File Trans"
@@ -103,15 +104,41 @@ if display_version:
         display_version = f"v{display_version}"
     st.caption(f"Version: {display_version}")
 
-app_id = os.getenv("BAIDU_APP_ID", "").strip()
-secret_key = os.getenv("BAIDU_SECRET_KEY", "").strip()
-if not app_id or not secret_key:
-    st.error("未检测到 BAIDU_APP_ID / BAIDU_SECRET_KEY。请在 Streamlit Cloud 的 Settings → Secrets 中配置后刷新页面。")
+# --- 引擎选择 ---
+engine = st.radio("选择翻译引擎", ["Baidu (V2.12)", "Kimi (V2.14)"], horizontal=True, key="engine")
+
+# --- 密钥配置 ---
+if engine == "Baidu (V2.12)":
+    app_id = os.getenv("BAIDU_APP_ID", "").strip()
+    secret_key = os.getenv("BAIDU_SECRET_KEY", "").strip()
+    
+    with st.expander("Baidu API 配置", expanded=not (app_id and secret_key)):
+        app_id = st.text_input("BAIDU_APP_ID", value=app_id, type="password")
+        secret_key = st.text_input("BAIDU_SECRET_KEY", value=secret_key, type="password")
+    
+    if not app_id or not secret_key:
+        st.error("未检测到 BAIDU_APP_ID / BAIDU_SECRET_KEY。请在配置项中输入或在 Secrets 中配置。")
+    
+    # 语言映射使用 Baidu 的
+    TO_LANG_MAP = baidu_bt.TO_LANG_MAP
+else:
+    kimi_api_key = os.getenv("KIMI_API_KEY", "").strip()
+    kimi_model = os.getenv("KIMI_MODEL", "kimi-k2.6").strip()
+    
+    with st.expander("Kimi API 配置", expanded=not kimi_api_key):
+        kimi_api_key = st.text_input("KIMI_API_KEY", value=kimi_api_key, type="password")
+        kimi_model = st.text_input("KIMI_MODEL", value=kimi_model)
+    
+    if not kimi_api_key:
+        st.error("未检测到 KIMI_API_KEY。请在配置项中输入或在 Secrets 中配置。")
+        
+    # 语言映射使用 Kimi 的（通常两者一致，但以对应引擎为准）
+    TO_LANG_MAP = kimi_bt.TO_LANG_MAP
 
 direction = st.selectbox(
     "翻译方向",
-    options=sorted(bt.TO_LANG_MAP.keys()),
-    index=sorted(bt.TO_LANG_MAP.keys()).index("ko2zh") if "ko2zh" in bt.TO_LANG_MAP else 0,
+    options=sorted(TO_LANG_MAP.keys()),
+    index=sorted(TO_LANG_MAP.keys()).index("ko2zh") if "ko2zh" in TO_LANG_MAP else 0,
     key="direction",
 )
 append_translation = st.checkbox("在原文下方保留翻译对照", value=False, key="append_translation")
@@ -169,14 +196,24 @@ col_run, col_dl, col_done = st.columns([2, 1, 1] if is_mobile else [1, 1, 1])
 _busy_dialog()
 
 with col_run:
-    st.button(
-        "开始翻译",
-        disabled=(
+    if engine == "Baidu (V2.12)":
+        run_disabled = (
             st.session_state.is_running
             or bool(st.session_state.result_bytes and st.session_state.result_file_name)
             or uploaded_file is None
             or (not app_id or not secret_key)
-        ),
+        )
+    else:
+        run_disabled = (
+            st.session_state.is_running
+            or bool(st.session_state.result_bytes and st.session_state.result_file_name)
+            or uploaded_file is None
+            or (not kimi_api_key)
+        )
+
+    st.button(
+        "开始翻译",
+        disabled=run_disabled,
         use_container_width=True,
         key="run_translate",
         on_click=_on_start_translate,
@@ -312,17 +349,30 @@ if st.session_state.translate_requested and uploaded_file is not None and st.ses
                 try:
                     writer = _StreamlitLogWriter()
                     with redirect_stdout(writer), redirect_stderr(writer):
-                        output_path = bt.translate_file(
-                            input_file=str(in_path),
-                            output_dir=str(out_dir),
-                            name=f"translated_{Path(uploaded_file.name).stem}",
-                            direction=direction,
-                            append=append_translation,
-                            corpus=generate_corpus,
-                            revision_file=str(revision_path),
-                            app_id=app_id or None,
-                            secret_key=secret_key or None,
-                        )
+                        if engine == "Baidu (V2.12)":
+                            output_path = baidu_bt.translate_file(
+                                input_file=str(in_path),
+                                output_dir=str(out_dir),
+                                name=f"translated_{Path(uploaded_file.name).stem}",
+                                direction=direction,
+                                append=append_translation,
+                                corpus=generate_corpus,
+                                revision_file=str(revision_path),
+                                app_id=app_id or None,
+                                secret_key=secret_key or None,
+                            )
+                        else:
+                            output_path = kimi_bt.translate_file(
+                                input_file=str(in_path),
+                                output_dir=str(out_dir),
+                                name=f"translated_{Path(uploaded_file.name).stem}",
+                                direction=direction,
+                                append=append_translation,
+                                corpus=generate_corpus,
+                                revision_file=str(revision_path),
+                                api_key=kimi_api_key or None,
+                                model=kimi_model or None,
+                            )
                     writer.flush()
                 finally:
                     try:
