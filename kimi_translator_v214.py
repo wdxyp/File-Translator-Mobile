@@ -1409,12 +1409,17 @@ def translate_word(input_file, output_file):
 
 # --- 线程控制 ---
 
-def check_direction_mismatch(input_file):
+def check_direction_mismatch(input_file, direction=None):
     """
-    预检：如果翻译方向和文件内容明显不匹配，弹出预警
+    预检：如果翻译方向和文件内容明显不匹配，返回错误原因
     """
     try:
-        direction = translation_direction.get()
+        if direction is None:
+            try:
+                direction = translation_direction.get()
+            except Exception:
+                return None
+        
         from_lang = FROM_LANG_MAP.get(direction)
         to_lang = TO_LANG_MAP.get(direction)
         
@@ -1443,7 +1448,7 @@ def check_direction_mismatch(input_file):
             sample_text = "\n".join(texts)
 
         if not sample_text.strip():
-            return True
+            return None
 
         # --- [优化] 更加通用的语言特征预检 ---
         has_korean = bool(HANGUL_RE.search(sample_text))
@@ -1451,14 +1456,6 @@ def check_direction_mismatch(input_file):
         has_japanese = bool(re.search(r'[\u3040-\u30ff]', sample_text))
         # 检测连续的英文字母，排除掉零散的符号
         has_english = bool(re.search(r'[a-zA-Z]{5,}', sample_text)) 
-
-        # 构造易读的方向标签
-        dir_labels = {
-            'ko2zh': '韩 -> 中', 'zh2ko': '中 -> 韩', 'ko2vi': '韩 -> 越', 'ko2en': '韩 -> 英',
-            'zh2en': '中 -> 英', 'en2zh': '英 -> 中', 'zh_tw2en': '繁中 -> 英', 'en2zh_tw': '英 -> 繁中',
-            'zh2ja': '中 -> 日', 'ja2zh': '日 -> 中', 'en2ko': '英 -> 韩', 'vi2zh': '越 -> 中'
-        }
-        current_dir_label = dir_labels.get(direction, direction)
 
         warning_reason = ""
         # 核心预警逻辑：如果检测到的语言 既不是源语言 也不是 目标语言，则报警
@@ -1474,13 +1471,10 @@ def check_direction_mismatch(input_file):
             elif from_lang == 'zh' and not has_chinese: warning_reason = "英文"
             elif from_lang == 'ja' and not has_japanese: warning_reason = "英文"
 
-        if warning_reason:
-            return messagebox.askyesno("预警", f"检测到当前翻译方向为 [{current_dir_label}]，但文件内容似乎是 {warning_reason}（既非源语言也非目标语言）。\n\n是否继续执行翻译？")
-        
-        return True
+        return warning_reason if warning_reason else None
     except Exception as e:
         print(f"[预检] 预检过程出错: {e}")
-        return True
+        return None
 
 def start_translation():
     input_file = input_file_entry.get()
@@ -1490,8 +1484,17 @@ def start_translation():
         return
     
     # --- [新增] 翻译方向预检 ---
-    if not check_direction_mismatch(input_file):
-        return
+    warning_reason = check_direction_mismatch(input_file)
+    if warning_reason:
+        # 构造易读的方向标签
+        dir_labels = {
+            'ko2zh': '韩 -> 中', 'zh2ko': '中 -> 韩', 'ko2vi': '韩 -> 越', 'ko2en': '韩 -> 英',
+            'zh2en': '中 -> 英', 'en2zh': '英 -> 中', 'zh_tw2en': '繁中 -> 英', 'en2zh_tw': '英 -> 繁中',
+            'zh2ja': '中 -> 日', 'ja2zh': '日 -> 中', 'en2ko': '英 -> 韩', 'vi2zh': '越 -> 中'
+        }
+        current_dir_label = dir_labels.get(translation_direction.get(), translation_direction.get())
+        if not messagebox.askyesno("预警", f"检测到当前翻译方向为 [{current_dir_label}]，但文件内容似乎是 {warning_reason}（既非源语言也非目标语言）。\n\n是否继续执行翻译？"):
+            return
     
     translate_button.config(state=tk.DISABLED, text="🚀 正在翻译，请稍候...")
     status_label.config(text="任务已启动，请查看终端进度...", foreground="#2980b9")

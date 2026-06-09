@@ -144,6 +144,33 @@ uploaded_file = st.file_uploader(
 
 use_github_revision = st.checkbox("使用 GitHub 上的 revision.md（自动更新）", value=True, key="use_github_revision")
 
+# --- 翻译方向预检 ---
+direction_warning = None
+if uploaded_file is not None:
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp:
+            tmp.write(uploaded_file.getvalue())
+            tmp_path = tmp.name
+        
+        # 使用当前引擎的预检逻辑
+        if engine == "Baidu (V2.12)":
+            direction_warning = baidu_bt.check_direction_mismatch(tmp_path, direction=direction)
+        else:
+            direction_warning = kimi_bt.check_direction_mismatch(tmp_path, direction=direction)
+            
+        os.remove(tmp_path)
+    except Exception as e:
+        st.error(f"预检出错: {e}")
+
+if direction_warning:
+    dir_labels = {
+        'ko2zh': '韩 -> 中', 'zh2ko': '中 -> 韩', 'ko2vi': '韩 -> 越', 'ko2en': '韩 -> 英',
+        'zh2en': '中 -> 英', 'en2zh': '英 -> 中', 'zh_tw2en': '繁中 -> 英', 'en2zh_tw': '英 -> 繁中',
+        'zh2ja': '中 -> 日', 'ja2zh': '日 -> 中', 'en2ko': '英 -> 韩', 'vi2zh': '越 -> 中'
+    }
+    current_dir_label = dir_labels.get(direction, direction)
+    st.error(f"⚠️ 预警：检测到当前翻译方向为 [{current_dir_label}]，但文件内容似乎是 {direction_warning}（既非源语言也非目标语言）。请检查翻译方向是否正确！")
+
 is_mobile = _is_mobile()
 
 def _on_download_complete():
@@ -194,6 +221,7 @@ with col_run:
             or bool(st.session_state.result_bytes and st.session_state.result_file_name)
             or uploaded_file is None
             or (not app_id or not secret_key)
+            or direction_warning is not None
         )
     else:
         run_disabled = (
@@ -201,6 +229,7 @@ with col_run:
             or bool(st.session_state.result_bytes and st.session_state.result_file_name)
             or uploaded_file is None
             or (not kimi_api_key)
+            or direction_warning is not None
         )
 
     st.button(
