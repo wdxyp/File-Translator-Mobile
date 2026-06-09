@@ -28,22 +28,27 @@ jobs:
           from pathlib import Path
           
           path = Path("version.json")
-          data = {"version": "1.0.0"}
+          data = {"version": "2.0.0"}
           if path.exists():
-            data = json.loads(path.read_text(encoding="utf-8"))
+            try:
+              data = json.loads(path.read_text(encoding="utf-8"))
+            except:
+              pass
           
-          v = str(data.get("version", "1.0.0")).strip().lstrip("vV")
-          m = re.match(r"^(\d+)\.(\d+)\.(\d+)$", v)
-          if not m:
-            major, minor, patch = 1, 0, 0
+          v = str(data.get("version", "2.0.0")).strip().lstrip("vV")
+          # 支持 x.y.z 或 x.y 格式
+          parts = v.split(".")
+          if len(parts) == 1:
+            major, minor, patch = int(parts[0]), 0, 1
+          elif len(parts) == 2:
+            major, minor, patch = int(parts[0]), int(parts[1]), 1
           else:
-            major, minor, patch = map(int, m.groups())
+            major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2]) + 1
           
-          patch += 1
           new_v = f"{major}.{minor}.{patch}"
           data["version"] = new_v
           path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-          print("New version:", new_v)
+          print(f"New version: {new_v}")
           PY
 
       - name: Commit and push

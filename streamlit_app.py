@@ -101,7 +101,7 @@ st.title(APP_TITLE)
 # --- 引擎选择 ---
 engine = st.radio("选择翻译引擎", ["Baidu (V2.12)", "Kimi (V2.14)"], horizontal=True, key="engine")
 
-display_version = "2.0" # 强制更新显示为 V2.0
+display_version = APP_VERSION_JSON or APP_VERSION or "2.0.0"
 if display_version:
     if not display_version.lower().startswith("v"):
         display_version = f"v{display_version}"
