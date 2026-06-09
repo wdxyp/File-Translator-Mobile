@@ -1411,77 +1411,59 @@ def translate_word(input_file, output_file):
 
 def _extract_sample_text(input_file):
     """
-    提取样本内容供语言识别
+    极简采样：只提取文件最开始的一点内容
     """
     try:
         sample_text = ""
         ext = os.path.splitext(input_file)[1].lower()
         if ext == '.docx':
             doc = Document(input_file)
-            # 扫描前 20 个段落
-            texts = [p.text for p in doc.paragraphs[:20] if p.text.strip()]
-            # 扫描前 5 个表格的内容
-            for table in doc.tables[:5]:
-                for row in table.rows:
-                    for cell in row.cells:
-                        if cell.text.strip():
-                            texts.append(cell.text)
-            sample_text = "\n".join(texts)
+            for p in doc.paragraphs:
+                if p.text.strip():
+                    sample_text = p.text
+                    break
         elif ext == '.xlsx':
             wb = load_workbook(input_file, read_only=True, data_only=True)
             ws = wb.active
-            cells = []
-            # 扫描前 50 行
-            for row in ws.iter_rows(max_row=50):
+            for row in ws.iter_rows(max_row=10):
                 for cell in row:
-                    if cell.value and isinstance(cell.value, str):
-                        cells.append(str(cell.value))
-            sample_text = "\n".join(cells)
+                    if cell.value and isinstance(cell.value, str) and cell.value.strip():
+                        sample_text = str(cell.value)
+                        break
+                if sample_text: break
         elif ext == '.ppt' or ext == '.pptx':
             prs = Presentation(input_file)
-            texts = []
-            # 扫描前 10 张幻灯片
-            for slide in prs.slides[:10]:
+            for slide in prs.slides:
                 for shape in slide.shapes:
-                    if shape.has_text_frame:
-                        texts.append(shape.text_frame.text)
-            sample_text = "\n".join(texts)
+                    if shape.has_text_frame and shape.text_frame.text.strip():
+                        sample_text = shape.text_frame.text
+                        break
+                if sample_text: break
         return sample_text
     except Exception:
         return ""
 
 def _judge_direction_warning(langs, direction):
     """
-    根据提取的语言特征和方向，判断是否预警
+    极简逻辑：只看原语言是否一致
     """
-    if not langs:
-        return None
-    
-    has_korean = langs.get("has_korean", False)
-    has_chinese = langs.get("has_chinese", False)
-    has_japanese = langs.get("has_japanese", False)
-    has_english = langs.get("has_english", False)
+    if not langs: return None
     
     from_lang = FROM_LANG_MAP.get(direction)
-    to_lang = TO_LANG_MAP.get(direction)
-    
-    warning_reason = ""
-    # --- [简约版源语言匹配逻辑] ---
-    from_lang_names = {
-        'zh': '中文', 'kor': '韩文', 'ja': '日文', 'en': '英文', 'vi': '越文'
-    }
+    from_lang_names = {'zh': '中文', 'kor': '韩文', 'ja': '日文', 'en': '英文', 'vi': '越文'}
     source_name = from_lang_names.get(from_lang, from_lang)
 
-    if from_lang == 'zh' and not has_chinese:
-        warning_reason = f"文件内容似乎不包含 [{source_name}]"
-    elif from_lang == 'kor' and not has_korean:
-        warning_reason = f"文件内容似乎不包含 [{source_name}]"
-    elif from_lang == 'ja' and not has_japanese:
-        warning_reason = f"文件内容似乎不包含 [{source_name}]"
-    elif from_lang == 'en' and not has_english:
-        warning_reason = f"文件内容似乎不包含 [{source_name}]"
+    # 逻辑：如果不包含所选的源语言，直接拦截
+    if from_lang == 'zh' and not langs.get("has_chinese"):
+        return f"文件开头未检测到 [{source_name}]"
+    elif from_lang == 'kor' and not langs.get("has_korean"):
+        return f"文件开头未检测到 [{source_name}]"
+    elif from_lang == 'ja' and not langs.get("has_japanese"):
+        return f"文件开头未检测到 [{source_name}]"
+    elif from_lang == 'en' and not langs.get("has_english"):
+        return f"文件开头未检测到 [{source_name}]"
 
-    return warning_reason if warning_reason else None
+    return None
 
 def check_direction_mismatch(input_file, direction=None):
     """
