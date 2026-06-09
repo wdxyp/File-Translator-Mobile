@@ -902,19 +902,23 @@ def check_direction_mismatch(input_file, direction=None):
         has_english = bool(re.search(r'[a-zA-Z]{3,}', sample_text)) 
 
         warning_reason = ""
-        # --- [改进版防呆逻辑] ---
-        # 情况 A: 选了韩翻中，但全是中文，没有韩文
-        if from_lang == 'kor' and to_lang in ('zh', 'zh_tw') and has_chinese and not has_korean:
-            warning_reason = "内容似乎已经是 [中文]，但您选择了 [韩 -> 中]"
-        # 情况 B: 选了中翻韩，但全是韩文，没有中文
-        elif from_lang == 'zh' and to_lang == 'kor' and has_korean and not has_chinese:
-            warning_reason = "内容似乎已经是 [韩文]，但您选择了 [中 -> 韩]"
-        # 情况 C: 选了韩翻X，但没有韩文，且有日文或英文
+        # --- [极度严苛防呆逻辑] ---
+        # 只要发现文件中有目标语言，就拦截（不管有没有源语言）
+        
+        # 1. 拦截目标是中文，但内容里已经有中文的情况
+        if to_lang in ('zh', 'zh_tw') and has_chinese:
+            warning_reason = "内容似乎已经是 [中文]，但您选择了 [翻译成中文] 的方向"
+        
+        # 2. 拦截目标是韩文，但内容里已经有韩文的情况
+        elif to_lang == 'kor' and has_korean:
+            warning_reason = "内容似乎已经是 [韩文]，但您选择了 [翻译成韩文] 的方向"
+        
+        # 3. 拦截源语言完全不符的情况（例如选了韩翻X，但一个韩文字符都没有）
         elif from_lang == 'kor' and not has_korean:
-            if has_japanese: warning_reason = "内容似乎是 [日文]，与 [韩语] 源语种不符"
+            if has_chinese: warning_reason = "内容似乎是 [中文]，与 [韩语] 源语种不符"
+            elif has_japanese: warning_reason = "内容似乎是 [日文]，与 [韩语] 源语种不符"
             elif has_english and to_lang != 'en': warning_reason = "内容似乎是 [英文]，与 [韩语] 源语种不符"
         
-        # 情况 D: 选了中翻X，但没有中文
         elif from_lang == 'zh' and not has_chinese:
             if has_korean: warning_reason = "内容似乎是 [韩文]，与 [中文] 源语种不符"
             elif has_japanese: warning_reason = "内容似乎是 [日文]，与 [中文] 源语种不符"
