@@ -1409,20 +1409,11 @@ def translate_word(input_file, output_file):
 
 # --- 线程控制 ---
 
-def check_direction_mismatch(input_file, direction=None):
+def _extract_sample_text(input_file):
     """
-    预检：如果翻译方向和文件内容明显不匹配，返回错误原因
+    提取样本内容供语言识别
     """
     try:
-        if direction is None:
-            try:
-                direction = translation_direction.get()
-            except Exception:
-                return None
-        
-        from_lang = FROM_LANG_MAP.get(direction)
-        to_lang = TO_LANG_MAP.get(direction)
-        
         sample_text = ""
         ext = os.path.splitext(input_file)[1].lower()
         if ext == '.docx':
@@ -1455,37 +1446,66 @@ def check_direction_mismatch(input_file, direction=None):
                     if shape.has_text_frame:
                         texts.append(shape.text_frame.text)
             sample_text = "\n".join(texts)
+        return sample_text
+    except Exception:
+        return ""
 
+def _judge_direction_warning(langs, direction):
+    """
+    根据提取的语言特征和方向，判断是否预警
+    """
+    if not langs:
+        return None
+    
+    has_korean = langs.get("has_korean", False)
+    has_chinese = langs.get("has_chinese", False)
+    has_japanese = langs.get("has_japanese", False)
+    has_english = langs.get("has_english", False)
+    
+    from_lang = FROM_LANG_MAP.get(direction)
+    to_lang = TO_LANG_MAP.get(direction)
+    
+    warning_reason = ""
+    # --- [简约版源语言匹配逻辑] ---
+    from_lang_names = {
+        'zh': '中文', 'kor': '韩文', 'ja': '日文', 'en': '英文', 'vi': '越文'
+    }
+    source_name = from_lang_names.get(from_lang, from_lang)
+
+    if from_lang == 'zh' and not has_chinese:
+        warning_reason = f"文件内容似乎不包含 [{source_name}]"
+    elif from_lang == 'kor' and not has_korean:
+        warning_reason = f"文件内容似乎不包含 [{source_name}]"
+    elif from_lang == 'ja' and not has_japanese:
+        warning_reason = f"文件内容似乎不包含 [{source_name}]"
+    elif from_lang == 'en' and not has_english:
+        warning_reason = f"文件内容似乎不包含 [{source_name}]"
+
+    return warning_reason if warning_reason else None
+
+def check_direction_mismatch(input_file, direction=None):
+    """
+    预检：如果翻译方向和文件内容明显不匹配，返回错误原因
+    """
+    try:
+        if direction is None:
+            try:
+                direction = translation_direction.get()
+            except Exception:
+                return None
+        
+        sample_text = _extract_sample_text(input_file)
         if not sample_text.strip():
             return None
 
-        # --- [优化] 更加通用的语言特征预检 ---
-        has_korean = bool(HANGUL_RE.search(sample_text))
-        has_chinese = bool(CHINESE_RE.search(sample_text))
-        has_japanese = bool(re.search(r'[\u3040-\u30ff]', sample_text))
-        # 检测连续的英文字母
-        has_english = bool(re.search(r'[a-zA-Z]{3,}', sample_text)) 
-
-        warning_reason = ""
-        # --- [简约版源语言匹配逻辑] ---
-        # 只检查文件内容是否包含“源语言”，不符合则拦截
-        
-        # 构造源语言的易读名称
-        from_lang_names = {
-            'zh': '中文', 'kor': '韩文', 'ja': '日文', 'en': '英文', 'vi': '越文'
+        langs = {
+            "has_korean": bool(HANGUL_RE.search(sample_text)),
+            "has_chinese": bool(CHINESE_RE.search(sample_text)),
+            "has_japanese": bool(re.search(r'[\u3040-\u30ff]', sample_text)),
+            "has_english": bool(re.search(r'[a-zA-Z]{3,}', sample_text))
         }
-        source_name = from_lang_names.get(from_lang, from_lang)
 
-        if from_lang == 'zh' and not has_chinese:
-            warning_reason = f"文件内容似乎不包含 [{source_name}]，请检查翻译方向是否选择正确"
-        elif from_lang == 'kor' and not has_korean:
-            warning_reason = f"文件内容似乎不包含 [{source_name}]，请检查翻译方向是否选择正确"
-        elif from_lang == 'ja' and not has_japanese:
-            warning_reason = f"文件内容似乎不包含 [{source_name}]，请检查翻译方向是否选择正确"
-        elif from_lang == 'en' and not has_english:
-            warning_reason = f"文件内容似乎不包含 [{source_name}]，请检查翻译方向是否选择正确"
-
-        return warning_reason if warning_reason else None
+        return _judge_direction_warning(langs, direction)
     except Exception as e:
         print(f"[预检] 预检过程出错: {e}")
         return None
