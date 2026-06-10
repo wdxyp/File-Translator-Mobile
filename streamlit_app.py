@@ -386,7 +386,7 @@ if st.session_state.translate_requested and uploaded_file is not None and st.ses
                             output_path = baidu_bt.translate_file(
                                 input_file=str(in_path),
                                 output_dir=str(out_dir),
-                                name=f"translated_{Path(uploaded_file.name).stem}",
+                                name=f"translated_V2.12_{Path(uploaded_file.name).stem}",
                                 direction=direction,
                                 append=append_translation,
                                 corpus=generate_corpus,
@@ -398,7 +398,7 @@ if st.session_state.translate_requested and uploaded_file is not None and st.ses
                             output_path = kimi_bt.translate_file(
                                 input_file=str(in_path),
                                 output_dir=str(out_dir),
-                                name=f"translated_{Path(uploaded_file.name).stem}",
+                                name=f"translated_V2.14_{Path(uploaded_file.name).stem}",
                                 direction=direction,
                                 append=append_translation,
                                 corpus=generate_corpus,
