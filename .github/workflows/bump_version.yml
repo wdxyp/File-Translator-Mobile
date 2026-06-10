@@ -24,7 +24,7 @@ jobs:
       - name: Bump version.json
         run: |
           python - <<'PY'
-          import json, re
+          import json
           from pathlib import Path
           
           path = Path("version.json")
@@ -39,11 +39,22 @@ jobs:
           # 支持 x.y.z 或 x.y 格式
           parts = v.split(".")
           if len(parts) == 1:
-            major, minor, patch = int(parts[0]), 0, 1
+            major, minor, patch = int(parts[0]), 0, 0
           elif len(parts) == 2:
-            major, minor, patch = int(parts[0]), int(parts[1]), 1
+            major, minor, patch = int(parts[0]), int(parts[1]), 0
           else:
-            major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2]) + 1
+            major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
+          
+          # bump 规则：
+          # - patch: 0~9，超过 9 -> 进位到 minor，并重置为 0
+          # - minor: 0~9，超过 9 -> 进位到 major，并重置为 0
+          patch += 1
+          if patch > 9:
+            patch = 0
+            minor += 1
+          if minor > 9:
+            minor = 0
+            major += 1
           
           new_v = f"{major}.{minor}.{patch}"
           data["version"] = new_v
