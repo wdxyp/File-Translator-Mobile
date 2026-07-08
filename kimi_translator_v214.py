@@ -90,6 +90,18 @@ if KIMI_API_KEY == "YOUR_KIMI_API_KEY":
 revision_map = {}
 original_texts = []
 translated_texts = []
+root = None
+status_label = None
+translate_button = None
+input_file_entry = None
+output_folder_entry = None
+custom_filename_entry = None
+
+def _has_live_root():
+    try:
+        return root is not None and bool(root.winfo_exists())
+    except Exception:
+        return False
 
 class _ValueBox:
     def __init__(self, value=None):
@@ -225,12 +237,12 @@ A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 
 def get_target_to_lang():
     try:
-        if root and root.winfo_exists():
-            direction = translation_direction.get()
-            return TO_LANG_MAP.get(direction)
+        direction = translation_direction.get()
     except Exception:
-        pass
-    return None
+        return None
+    if not isinstance(direction, str):
+        return None
+    return TO_LANG_MAP.get(direction)
 
 def get_target_font_name():
     to_lang = get_target_to_lang()
@@ -947,11 +959,8 @@ def _translate_ppt_paragraphs_batch(paragraphs):
 def update_ui_status(msg):
     """线程安全地更新 UI 状态"""
     _mark_progress(msg)
-    try:
-        if root and root.winfo_exists():
-            root.after(0, lambda: status_label.config(text=msg))
-    except Exception:
-        pass
+    if _has_live_root() and status_label is not None:
+        root.after(0, lambda: status_label.config(text=msg))
 
 def translate_ppt(input_file, output_file):
     prs = Presentation(input_file)
@@ -1028,7 +1037,7 @@ def translate_excel_xlsx(input_file, output_file):
         def process_single_row(row_info):
             # 检查 UI 是否还在
             try:
-                if not root or not root.winfo_exists():
+                if root is not None and not root.winfo_exists():
                     return row_info[0], row_info[1], [j['orig'] for j in row_info[1]]
             except Exception:
                 return row_info[0], row_info[1], [j['orig'] for j in row_info[1]]
@@ -1142,7 +1151,7 @@ def translate_excel_xls(input_file, output_file):
             def process_xls_row(row_info):
                 # 检查 UI 是否还在
                 try:
-                    if not root or not root.winfo_exists():
+                    if root is not None and not root.winfo_exists():
                         return row_info[0], row_info[1], row_info[2], row_info[1]
                 except Exception:
                     return row_info[0], row_info[1], row_info[2], row_info[1]
@@ -1482,6 +1491,8 @@ def _judge_direction_warning(langs, direction):
     极简逻辑：只看原语言是否一致
     """
     if not langs: return None
+    if not isinstance(direction, str):
+        return None
     
     from_lang = FROM_LANG_MAP.get(direction)
     from_lang_names = {'zh': '中文', 'kor': '韩文', 'ja': '日文', 'en': '英文', 'vi': '越文'}
@@ -1589,11 +1600,13 @@ def run_translation_task(input_file, output_folder):
         duration_minutes = (end_time - start_time) / 60
         print(f"[完成] 文件已保存至: {output_file}")
         print(f"[统计] 翻译总耗时: {duration_minutes:.2f} 分钟\n")
-        root.after(0, lambda: translation_done_callback(output_file, duration_minutes))
+        if _has_live_root():
+            root.after(0, lambda: translation_done_callback(output_file, duration_minutes))
     except Exception as e:
         err_msg = str(e)
         print(f"[错误] 详情: {err_msg}")
-        root.after(0, lambda: translation_failed_callback(err_msg))
+        if _has_live_root():
+            root.after(0, lambda: translation_failed_callback(err_msg))
     finally:
         _watchdog_stop()
 

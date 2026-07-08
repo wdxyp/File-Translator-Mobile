@@ -83,6 +83,18 @@ if APP_ID == "YOUR_APP_ID" or SECRET_KEY == "YOUR_SECRET_KEY":
 revision_map = {}
 original_texts = []
 translated_texts = []
+root = None
+status_label = None
+translate_button = None
+input_file_entry = None
+output_folder_entry = None
+custom_filename_entry = None
+
+def _has_live_root():
+    try:
+        return root is not None and bool(root.winfo_exists())
+    except Exception:
+        return False
 
 class _ValueBox:
     def __init__(self, value=None):
@@ -452,7 +464,8 @@ def translate_shape_for_ppt(shape):
 
 def update_ui_status(msg):
     """线程安全地更新 UI 状态"""
-    root.after(0, lambda: status_label.config(text=msg))
+    if _has_live_root() and status_label is not None:
+        root.after(0, lambda: status_label.config(text=msg))
 
 def translate_ppt(input_file, output_file):
     prs = Presentation(input_file)
@@ -1022,11 +1035,13 @@ def run_translation_task(input_file, output_folder):
         duration_minutes = (end_time - start_time) / 60
         print(f"[完成] 文件已保存至: {output_file}")
         print(f"[统计] 翻译总耗时: {duration_minutes:.2f} 分钟\n")
-        root.after(0, lambda: translation_done_callback(output_file, duration_minutes))
+        if _has_live_root():
+            root.after(0, lambda: translation_done_callback(output_file, duration_minutes))
     except Exception as e:
         err_msg = str(e)
         print(f"[错误] 详情: {err_msg}")
-        root.after(0, lambda: translation_failed_callback(err_msg))
+        if _has_live_root():
+            root.after(0, lambda: translation_failed_callback(err_msg))
 
 def translation_done_callback(output_file, duration_minutes):
     translate_button.config(state=tk.NORMAL, text="🚀 开始长句翻译任务")
