@@ -846,35 +846,69 @@ def translate_word(input_file, output_file):
 
 def _extract_sample_text(input_file):
     """
-    极简采样：只提取文件最开始的一点内容
+    预检采样：跨多个位置收集少量文本，降低首段误判概率
     """
     try:
-        sample_text = ""
+        snippets = []
+        total_chars = 0
+        max_snippets = 24
+        char_limit = 1200
         ext = os.path.splitext(input_file)[1].lower()
+
+        def _append_sample(value):
+            nonlocal total_chars
+            if value is None:
+                return False
+            text = str(value).replace("\r", "\n").replace("\v", "\n").strip()
+            if not text:
+                return False
+            snippets.append(text)
+            total_chars += len(text)
+            return len(snippets) >= max_snippets or total_chars >= char_limit
+
         if ext == '.docx':
             doc = Document(input_file)
             for p in doc.paragraphs:
-                if p.text.strip():
-                    sample_text = p.text
+                if _append_sample(p.text):
                     break
         elif ext == '.xlsx':
             wb = load_workbook(input_file, read_only=True, data_only=True)
-            ws = wb.active
-            for row in ws.iter_rows(max_row=10):
-                for cell in row:
-                    if cell.value and isinstance(cell.value, str) and cell.value.strip():
-                        sample_text = str(cell.value)
+            try:
+                for ws in wb.worksheets[:5]:
+                    for row in ws.iter_rows(max_row=30, max_col=20):
+                        stop = False
+                        for cell in row:
+                            if _append_sample(cell.value):
+                                stop = True
+                                break
+                        if stop:
+                            break
+                    if len(snippets) >= max_snippets or total_chars >= char_limit:
                         break
-                if sample_text: break
+            finally:
+                try:
+                    wb.close()
+                except Exception:
+                    pass
         elif ext == '.ppt' or ext == '.pptx':
             prs = Presentation(input_file)
             for slide in prs.slides:
                 for shape in slide.shapes:
-                    if shape.has_text_frame and shape.text_frame.text.strip():
-                        sample_text = shape.text_frame.text
+                    text = ""
+                    if shape.has_text_frame:
+                        text = shape.text_frame.text
+                    elif getattr(shape, "has_table", False):
+                        text = "\n".join(
+                            cell.text
+                            for row in shape.table.rows
+                            for cell in row.cells
+                            if cell.text and cell.text.strip()
+                        )
+                    if _append_sample(text):
                         break
-                if sample_text: break
-        return sample_text
+                if len(snippets) >= max_snippets or total_chars >= char_limit:
+                    break
+        return "\n".join(snippets)
     except Exception:
         return ""
 
@@ -890,13 +924,13 @@ def _judge_direction_warning(langs, direction):
 
     # 逻辑：如果不包含所选的源语言，直接拦截
     if from_lang == 'zh' and not langs.get("has_chinese"):
-        return f"文件开头未检测到 [{source_name}]"
+        return f"文件抽样内容未检测到 [{source_name}]"
     elif from_lang == 'kor' and not langs.get("has_korean"):
-        return f"文件开头未检测到 [{source_name}]"
+        return f"文件抽样内容未检测到 [{source_name}]"
     elif from_lang == 'ja' and not langs.get("has_japanese"):
-        return f"文件开头未检测到 [{source_name}]"
+        return f"文件抽样内容未检测到 [{source_name}]"
     elif from_lang == 'en' and not langs.get("has_english"):
-        return f"文件开头未检测到 [{source_name}]"
+        return f"文件抽样内容未检测到 [{source_name}]"
 
     return None
 
